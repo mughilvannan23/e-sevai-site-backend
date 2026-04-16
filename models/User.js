@@ -30,10 +30,11 @@ const userSchema = new mongoose.Schema({
     default: 'employee'
   },
   employeeId: {
-    type: String,
-    unique: true,
-    uppercase: true
-  },
+  type: String,
+  unique: true,
+  sparse: true,
+  uppercase: true
+},
   isActive: {
     type: Boolean,
     default: true
