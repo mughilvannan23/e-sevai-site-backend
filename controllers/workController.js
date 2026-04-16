@@ -5,16 +5,29 @@ const WorkItem = require('../models/WorkItem');
 // Create work entry
 const createWork = async (req, res) => {
   try {
-    const { date, customerName, workTitle, workItemId, amount, paymentStatus, workStatus, notes } = req.body;
+    const { date, customerName, customerPhone, paymentMethod, items, amount, paymentStatus, workStatus, notes } = req.body;
 
     let adminPrice = 0;
-    let actualWorkTitle = workTitle;
+    const processedItems = [];
 
-    if (workItemId) {
-      const selectedItem = await WorkItem.findById(workItemId);
-      if (selectedItem) {
-        adminPrice = selectedItem.price;
-        actualWorkTitle = selectedItem.name; // Fall back to name
+    if (items && Array.isArray(items)) {
+      for (const item of items) {
+        if (item.workItemId) {
+          const selectedItem = await WorkItem.findById(item.workItemId);
+          if (selectedItem) {
+            adminPrice += selectedItem.price;
+            processedItems.push({
+              workItemId: item.workItemId,
+              title: selectedItem.name,
+              adminPriceAtTime: selectedItem.price
+            });
+          }
+        } else if (item.workTitle) {
+          processedItems.push({
+            title: item.workTitle,
+            adminPriceAtTime: 0
+          });
+        }
       }
     }
 
@@ -23,8 +36,9 @@ const createWork = async (req, res) => {
       employee: req.user._id,
       date: new Date(date),
       customerName,
-      workTitle: actualWorkTitle,
-      workItem: workItemId || undefined,
+      customerPhone,
+      paymentMethod: paymentMethod || 'Hand Cash',
+      items: processedItems,
       adminPrice,
       amount: parseFloat(amount),
       paymentStatus,
@@ -86,7 +100,7 @@ const getMyWorks = async (req, res) => {
     if (search) {
       query.$or = [
         { customerName: { $regex: search, $options: 'i' } },
-        { workTitle: { $regex: search, $options: 'i' } }
+        { 'items.title': { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -158,7 +172,7 @@ const getWorkById = async (req, res) => {
   // Update work entry
 const updateWork = async (req, res) => {
   try {
-    const { date, customerName, workTitle, workItemId, amount, paymentStatus, workStatus, notes } = req.body;
+    const { date, customerName, customerPhone, paymentMethod, items, amount, paymentStatus, workStatus, notes } = req.body;
 
     const work = await Work.findById(req.params.id);
     
@@ -180,20 +194,36 @@ const updateWork = async (req, res) => {
     // Update fields
     if (date) work.date = new Date(date);
     if (customerName) work.customerName = customerName;
+    if (customerPhone !== undefined) work.customerPhone = customerPhone;
+    if (paymentMethod) work.paymentMethod = paymentMethod;
     if (amount !== undefined) work.amount = parseFloat(amount);
     if (paymentStatus) work.paymentStatus = paymentStatus;
     if (workStatus) work.workStatus = workStatus;
     if (notes !== undefined) work.notes = notes;
 
-    if (workItemId) {
-      const selectedItem = await WorkItem.findById(workItemId);
-      if (selectedItem) {
-        work.adminPrice = selectedItem.price;
-        work.workTitle = selectedItem.name;
-        work.workItem = workItemId;
+    if (items && Array.isArray(items)) {
+      let adminPrice = 0;
+      const processedItems = [];
+      for (const item of items) {
+        if (item.workItemId) {
+          const selectedItem = await WorkItem.findById(item.workItemId);
+          if (selectedItem) {
+            adminPrice += selectedItem.price;
+            processedItems.push({
+              workItemId: item.workItemId,
+              title: selectedItem.name,
+              adminPriceAtTime: selectedItem.price
+            });
+          }
+        } else if (item.workTitle) {
+          processedItems.push({
+            title: item.workTitle,
+            adminPriceAtTime: 0
+          });
+        }
       }
-    } else if (workTitle) {
-      work.workTitle = workTitle;
+      work.items = processedItems;
+      work.adminPrice = adminPrice;
     }
 
     await work.save();

@@ -17,16 +17,32 @@ const workSchema = new mongoose.Schema({
     trim: true,
     maxlength: [100, 'Customer name cannot exceed 100 characters']
   },
-  workTitle: {
+  customerPhone: {
     type: String,
-    required: [true, 'Work title is required'],
     trim: true,
-    maxlength: [200, 'Work title cannot exceed 200 characters']
+    maxlength: [15, 'Phone number cannot exceed 15 characters'],
+    match: [/^[0-9+\-\s()]+$/, 'Please enter a valid phone number']
   },
-  workItem: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'WorkItem'
+  paymentMethod: {
+    type: String,
+    enum: ['GPay', 'Hand Cash', 'Cash', 'Card', 'Bank Transfer', 'Other'],
+    default: 'Hand Cash'
   },
+  items: [{
+    workItemId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'WorkItem'
+    },
+    title: {
+      type: String,
+      required: [true, 'Work title is required']
+    },
+    adminPriceAtTime: {
+      type: Number,
+      required: true,
+      default: 0
+    }
+  }],
   adminPrice: {
     type: Number,
     default: 0

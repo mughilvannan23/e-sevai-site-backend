@@ -7,20 +7,20 @@ const PDFDocument = require('pdfkit');
 // Get all works with filters
 const getAllWorks = async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 10, 
-      startDate, 
-      endDate, 
-      employeeId, 
-      paymentStatus, 
-      workStatus, 
-      search 
+    const {
+      page = 1,
+      limit = 10,
+      startDate,
+      endDate,
+      employeeId,
+      paymentStatus,
+      workStatus,
+      search
     } = req.query;
-    
+
     // Build query
     const query = {};
-    
+
     // Date range filter
     if (startDate && endDate) {
       const start = new Date(startDate);
@@ -34,27 +34,27 @@ const getAllWorks = async (req, res) => {
       end.setHours(23, 59, 59, 999);
       query.date = { $lte: end };
     }
-    
+
     // Employee filter
     if (employeeId) {
       query.employee = employeeId;
     }
-    
+
     // Payment status filter
     if (paymentStatus) {
       query.paymentStatus = paymentStatus;
     }
-    
+
     // Work status filter
     if (workStatus) {
       query.workStatus = workStatus;
     }
-    
+
     // Search by customer name or work title
     if (search) {
       query.$or = [
         { customerName: { $regex: search, $options: 'i' } },
-        { workTitle: { $regex: search, $options: 'i' } }
+        { 'items.title': { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -100,7 +100,7 @@ const getDashboardStats = async (req, res) => {
 
     // Get employee statistics
     const totalEmployees = await User.countDocuments({ role: 'employee', isActive: true });
-    
+
     // Get work statistics
     const todayWorks = await Work.find({
       date: { $gte: today, $lt: tomorrow }
@@ -132,6 +132,8 @@ const getDashboardStats = async (req, res) => {
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
 
+    const pendingWorks = await Work.countDocuments({ workStatus: 'In Progress' });
+
     res.json({
       success: true,
       stats: {
@@ -141,7 +143,8 @@ const getDashboardStats = async (req, res) => {
         works: {
           today: todayWorks.length,
           month: monthWorks.length,
-          total: totalWorks
+          total: totalWorks,
+          pending: pendingWorks
         },
         revenue: {
           today: todayRevenue[0]?.total || 0,
@@ -165,7 +168,7 @@ const getDashboardStats = async (req, res) => {
 const getEmployeePerformance = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    
+
     // Default to current month if dates not provided
     const today = new Date();
     const start = startDate ? new Date(startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
@@ -238,7 +241,7 @@ const getEmployeePerformance = async (req, res) => {
 const getRevenueReport = async (req, res) => {
   try {
     const { startDate, endDate, groupBy = 'day' } = req.query;
-    
+
     // Default to current month if dates not provided
     const today = new Date();
     const start = startDate ? new Date(startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
@@ -252,10 +255,10 @@ const getRevenueReport = async (req, res) => {
     } else if (groupBy === 'year') {
       groupByExpr = { year: { $year: '$date' } };
     } else {
-      groupByExpr = { 
-        year: { $year: '$date' }, 
-        month: { $month: '$date' }, 
-        day: { $dayOfMonth: '$date' } 
+      groupByExpr = {
+        year: { $year: '$date' },
+        month: { $month: '$date' },
+        day: { $dayOfMonth: '$date' }
       };
     }
 
@@ -267,10 +270,15 @@ const getRevenueReport = async (req, res) => {
         }
       },
       {
+        $addFields: {
+          expectedRevenue: { $sum: '$items.adminPriceAtTime' }
+        }
+      },
+      {
         $group: {
           _id: groupByExpr,
-          totalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$adminPrice', 0] } },
-          pendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$adminPrice', 0] } },
+          totalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$expectedRevenue', 0] } },
+          pendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$expectedRevenue', 0] } },
           enteredTotalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$amount', 0] } },
           enteredPendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$amount', 0] } },
           totalWorks: { $sum: 1 },
@@ -285,9 +293,9 @@ const getRevenueReport = async (req, res) => {
 
     // Format the data
     const formattedData = revenueData.map(item => ({
-      period: groupBy === 'year' 
-        ? `${item._id.year}` 
-        : groupBy === 'month' 
+      period: groupBy === 'year'
+        ? `${item._id.year}`
+        : groupBy === 'month'
           ? `${item._id.year}-${String(item._id.month).padStart(2, '0')}`
           : `${item._id.year}-${String(item._id.month).padStart(2, '0')}-${String(item._id.day).padStart(2, '0')}`,
       totalRevenue: item.totalRevenue,
@@ -337,21 +345,28 @@ const downloadRevenueExcel = async (req, res) => {
     worksheet.columns = [
       { header: 'Date', key: 'date', width: 15 },
       { header: 'Employee', key: 'employee', width: 25 },
+      { header: 'Employee ID', key: 'employeeId', width: 15 },
       { header: 'Customer/Project', key: 'project', width: 25 },
       { header: 'Work Title', key: 'workTitle', width: 25 },
       { header: 'Revenue (Actual)', key: 'revenue', width: 15 },
       { header: 'Revenue (Expected)', key: 'expectedRevenue', width: 18 },
+      { header: 'Profit/Loss', key: 'profitLoss', width: 15 },
       { header: 'Payment Status', key: 'paymentStatus', width: 15 }
     ];
 
     works.forEach(work => {
+      const workTitles = work.items && work.items.length > 0 ? work.items.map(i => i.title).join(', ') : '';
+      const expectedRevenue = work.items ? work.items.reduce((sum, item) => sum + (item.adminPriceAtTime || 0), 0) : 0;
+      const profitLoss = work.amount - expectedRevenue;
       worksheet.addRow({
         date: new Date(work.date).toLocaleDateString('en-IN'),
         employee: work.employee ? work.employee.name : 'Unknown',
+        employeeId: work.employee ? work.employee.employeeId : 'N/A',
         project: work.customerName,
-        workTitle: work.workTitle,
+        workTitle: workTitles,
         revenue: work.amount,
-        expectedRevenue: work.adminPrice > 0 ? work.adminPrice : work.amount,
+        expectedRevenue: expectedRevenue,
+        profitLoss: profitLoss,
         paymentStatus: work.paymentStatus
       });
     });
@@ -394,51 +409,63 @@ const downloadRevenuePDF = async (req, res) => {
 
     const tableTop = margin => doc.y;
     let y = tableTop();
-    const itemX = { date: 30, emp: 100, proj: 200, title: 290, amt: 380, exp: 450, status: 520 };
-    
+    const itemX = { date: 30, emp: 80, empId: 130, proj: 160, title: 230, amt: 320, exp: 380, profit: 440, status: 500 };
+
     // Header
-    doc.fontSize(10).font('Helvetica-Bold');
+    doc.fontSize(8).font('Helvetica-Bold');
     doc.text('Date', itemX.date, y);
     doc.text('Employee', itemX.emp, y);
-    doc.text('Project', itemX.proj, y);
-    doc.text('Title', itemX.title, y);
-    doc.text('Actual Rev', itemX.amt, y);
-    doc.text('Expect Rev', itemX.exp, y);
+    doc.text('Emp ID', itemX.empId, y);
+    doc.text('Customer', itemX.proj, y);
+    doc.text('Work Title', itemX.title, y);
+    doc.text('Actual', itemX.amt, y);
+    doc.text('Expected', itemX.exp, y);
+    doc.text('P/L', itemX.profit, y);
     doc.text('Status', itemX.status, y);
+    doc.moveTo(30, y + 12).lineTo(560, y + 12).stroke();
+    y += 15;
 
-    doc.moveTo(30, y + 15).lineTo(560, y + 15).stroke();
-    y += 20;
-    
-    doc.font('Helvetica');
+    doc.font('Helvetica').fontSize(7);
     let totalRevenue = 0;
     let totalExpected = 0;
+    let totalProfit = 0;
 
     works.forEach(work => {
       if (y > 750) {
         doc.addPage();
         y = 30;
       }
+
+      const expectedRevenue = work.items ? work.items.reduce((sum, item) => sum + (item.adminPriceAtTime || 0), 0) : 0;
+      const profitLoss = work.amount - expectedRevenue;
+
       totalRevenue += work.amount;
-      totalExpected += work.adminPrice > 0 ? work.adminPrice : work.amount;
-      
+      totalExpected += expectedRevenue;
+      totalProfit += profitLoss;
+
       const empName = work.employee ? work.employee.name : 'Unknown';
-      const projName = work.customerName.length > 15 ? work.customerName.substring(0, 13) + '..' : work.customerName;
-      const titleName = work.workTitle.length > 15 ? work.workTitle.substring(0, 13) + '..' : work.workTitle;
+      const empId = work.employee ? work.employee.employeeId : 'N/A';
+      const projName = work.customerName.length > 12 ? work.customerName.substring(0, 10) + '..' : work.customerName;
+      const fullTitle = work.items && work.items.length > 0 ? work.items.map(i => i.title).join(', ') : '';
+      const titleName = fullTitle.length > 12 ? fullTitle.substring(0, 10) + '..' : fullTitle;
 
       doc.text(new Date(work.date).toLocaleDateString('en-IN'), itemX.date, y);
-      doc.text(empName.length > 15 ? empName.substring(0, 13) + '..' : empName, itemX.emp, y);
+      doc.text(empName.length > 8 ? empName.substring(0, 6) + '..' : empName, itemX.emp, y);
+      doc.text(empId, itemX.empId, y);
       doc.text(projName, itemX.proj, y);
       doc.text(titleName, itemX.title, y);
-      doc.text(`Rs.${work.amount}`, itemX.amt, y);
-      doc.text(`Rs.${work.adminPrice > 0 ? work.adminPrice : work.amount}`, itemX.exp, y);
+      doc.text(`₹${work.amount}`, itemX.amt, y);
+      doc.text(`₹${expectedRevenue}`, itemX.exp, y);
+      doc.text(`${profitLoss >= 0 ? '+' : ''}₹${profitLoss}`, itemX.profit, y);
       doc.text(work.paymentStatus, itemX.status, y);
-      
-      y += 20;
+
+      y += 12;
     });
 
     doc.moveTo(30, y).lineTo(560, y).stroke();
-    y += 10;
-    doc.font('Helvetica-Bold').text(`Total Actual: Rs.${totalRevenue} | Total Expected: Rs.${totalExpected}`, 30, y, { align: 'right' });
+    y += 5;
+    doc.font('Helvetica-Bold').fontSize(8);
+    doc.text(`Total Actual: ₹${totalRevenue} | Total Expected: ₹${totalExpected} | Total P/L: ${totalProfit >= 0 ? '+' : ''}₹${totalProfit}`, 30, y, { align: 'right' });
 
     doc.end();
   } catch (error) {
