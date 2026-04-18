@@ -10,7 +10,8 @@ const {
   createWorkItem,
   getAllWorkItems,
   updateWorkItem,
-  deleteWorkItem
+  deleteWorkItem,
+  updateProfile
 } = require('../controllers/adminController');
 const { updateEmployee } = require('../controllers/userController');
 const { authenticate, authorizeAdmin } = require('../middleware/auth');
@@ -22,6 +23,9 @@ router.get('/employee-performance', authenticate, authorizeAdmin, getEmployeePer
 router.get('/revenue-report', authenticate, authorizeAdmin, getRevenueReport);
 router.get('/revenue-report/download/excel', authenticate, authorizeAdmin, downloadRevenueExcel);
 router.get('/revenue-report/download/pdf', authenticate, authorizeAdmin, downloadRevenuePDF);
+
+// Profile management
+router.put('/profile', authenticate, authorizeAdmin, updateProfile);
 
 // User/Employee Management
 router.put('/employees/:id', authenticate, authorizeAdmin, updateEmployee);

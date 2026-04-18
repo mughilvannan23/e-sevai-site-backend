@@ -37,7 +37,12 @@ const workSchema = new mongoose.Schema({
       type: String,
       required: [true, 'Work title is required']
     },
-    adminPriceAtTime: {
+    workChargeAtTime: {
+      type: Number,
+      required: true,
+      default: 0
+    },
+    serviceChargeAtTime: {
       type: Number,
       required: true,
       default: 0

@@ -7,10 +7,15 @@ const workItemSchema = new mongoose.Schema({
     trim: true,
     unique: true
   },
-  price: {
+  workCharge: {
     type: Number,
-    required: [true, 'Fixed price is required'],
-    min: [0, 'Price must be positive']
+    required: [true, 'Work charge is required'],
+    min: [0, 'Work charge must be positive']
+  },
+  serviceCharge: {
+    type: Number,
+    required: [true, 'Service charge is required'],
+    min: [0, 'Service charge must be positive']
   },
   isActive: {
     type: Boolean,

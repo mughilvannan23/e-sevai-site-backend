@@ -3,6 +3,7 @@ const User = require('../models/User');
 const WorkItem = require('../models/WorkItem');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const bcrypt = require('bcryptjs');
 
 // Get all works with filters
 const getAllWorks = async (req, res) => {
@@ -134,6 +135,8 @@ const getDashboardStats = async (req, res) => {
 
     const pendingWorks = await Work.countDocuments({ workStatus: 'In Progress' });
 
+    const completedWorks = await Work.countDocuments({ workStatus: 'Completed' });
+
     res.json({
       success: true,
       stats: {
@@ -144,7 +147,8 @@ const getDashboardStats = async (req, res) => {
           today: todayWorks.length,
           month: monthWorks.length,
           total: totalWorks,
-          pending: pendingWorks
+          pending: pendingWorks,
+          completed: completedWorks
         },
         revenue: {
           today: todayRevenue[0]?.total || 0,
@@ -271,16 +275,45 @@ const getRevenueReport = async (req, res) => {
       },
       {
         $addFields: {
-          expectedRevenue: { $sum: '$items.adminPriceAtTime' }
+          entryWorkCharge: {
+            $sum: {
+              $map: {
+                input: { $ifNull: ['$items', []] },
+                as: 'item',
+                in: { $ifNull: ['$$item.workChargeAtTime', 0] }
+              }
+            }
+          },
+          entryServiceCharge: {
+            $sum: {
+              $map: {
+                input: { $ifNull: ['$items', []] },
+                as: 'item',
+                in: { $ifNull: ['$$item.serviceChargeAtTime', 0] }
+              }
+            }
+          },
+          collectedAmount: { $ifNull: ['$amount', 0] }
+        }
+      },
+      {
+        $addFields: {
+          expectedRevenue: { $add: ['$entryWorkCharge', '$entryServiceCharge'] },
+          netProfit: { $subtract: ['$collectedAmount', { $add: ['$entryWorkCharge', '$entryServiceCharge'] }] }
         }
       },
       {
         $group: {
           _id: groupByExpr,
-          totalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$expectedRevenue', 0] } },
-          pendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$expectedRevenue', 0] } },
+          totalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$collectedAmount', 0] } },
+          pendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$collectedAmount', 0] } },
           enteredTotalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$amount', 0] } },
           enteredPendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$amount', 0] } },
+          totalWorkCharge: { $sum: '$entryWorkCharge' },
+          totalServiceCharge: { $sum: '$entryServiceCharge' },
+          totalBaseCost: { $sum: '$expectedRevenue' },
+          totalActualCollected: { $sum: '$collectedAmount' },
+          totalNetProfit: { $sum: '$netProfit' },
           totalWorks: { $sum: 1 },
           paidWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, 1, 0] } },
           pendingWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, 1, 0] } }
@@ -302,14 +335,28 @@ const getRevenueReport = async (req, res) => {
       pendingRevenue: item.pendingRevenue,
       enteredTotalRevenue: item.enteredTotalRevenue,
       enteredPendingRevenue: item.enteredPendingRevenue,
+      totalWorkCharge: item.totalWorkCharge,
+      totalServiceCharge: item.totalServiceCharge,
+      totalBaseCost: item.totalBaseCost,
+      totalActualCollected: item.totalActualCollected,
+      totalNetProfit: item.totalNetProfit,
       totalWorks: item.totalWorks,
       paidWorks: item.paidWorks,
       pendingWorks: item.pendingWorks
     }));
 
+    const summary = {
+      totalWorkCharge: revenueData.reduce((sum, item) => sum + (item.totalWorkCharge || 0), 0),
+      totalServiceCharge: revenueData.reduce((sum, item) => sum + (item.totalServiceCharge || 0), 0),
+      totalBaseCost: revenueData.reduce((sum, item) => sum + (item.totalBaseCost || 0), 0),
+      totalActualCollected: revenueData.reduce((sum, item) => sum + (item.totalActualCollected || 0), 0),
+      totalNetProfit: revenueData.reduce((sum, item) => sum + (item.totalNetProfit || 0), 0)
+    };
+
     res.json({
       success: true,
       revenueData: formattedData,
+      summary,
       period: {
         startDate: start,
         endDate: end,
@@ -356,7 +403,7 @@ const downloadRevenueExcel = async (req, res) => {
 
     works.forEach(work => {
       const workTitles = work.items && work.items.length > 0 ? work.items.map(i => i.title).join(', ') : '';
-      const expectedRevenue = work.items ? work.items.reduce((sum, item) => sum + (item.adminPriceAtTime || 0), 0) : 0;
+      const expectedRevenue = work.items ? work.items.reduce((sum, item) => sum + ((item.workChargeAtTime || 0) + (item.serviceChargeAtTime || 0)), 0) : 0;
       const profitLoss = work.amount - expectedRevenue;
       worksheet.addRow({
         date: new Date(work.date).toLocaleDateString('en-IN'),
@@ -436,7 +483,7 @@ const downloadRevenuePDF = async (req, res) => {
         y = 30;
       }
 
-      const expectedRevenue = work.items ? work.items.reduce((sum, item) => sum + (item.adminPriceAtTime || 0), 0) : 0;
+      const expectedRevenue = work.items ? work.items.reduce((sum, item) => sum + ((item.workChargeAtTime || 0) + (item.serviceChargeAtTime || 0)), 0) : 0;
       const profitLoss = work.amount - expectedRevenue;
 
       totalRevenue += work.amount;
@@ -477,12 +524,60 @@ const downloadRevenuePDF = async (req, res) => {
 // WorkItem CRUD Operations
 const createWorkItem = async (req, res) => {
   try {
-    const { name, price } = req.body;
-    const workItem = new WorkItem({ name, price });
+    const { name, workCharge, serviceCharge } = req.body;
+
+    if (!name || workCharge === undefined || serviceCharge === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, workCharge and serviceCharge are required.'
+      });
+    }
+
+    const parsedWorkCharge = Number(workCharge);
+    const parsedServiceCharge = Number(serviceCharge);
+
+    if (Number.isNaN(parsedWorkCharge) || Number.isNaN(parsedServiceCharge)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Work charge and service charge must be numeric values.'
+      });
+    }
+
+    const workItem = new WorkItem({
+      name: name.trim(),
+      workCharge: parsedWorkCharge,
+      serviceCharge: parsedServiceCharge
+    });
+
     await workItem.save();
-    res.status(201).json({ success: true, message: 'Work item created successfully', workItem });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Work item created successfully',
+      workItem
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error while creating work item' });
+    console.error('Error creating work item:', error);
+
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map((err) => err.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(' ')
+      });
+    }
+
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'A work item with this name already exists.'
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while creating work item.'
+    });
   }
 };
 
@@ -497,8 +592,8 @@ const getAllWorkItems = async (req, res) => {
 
 const updateWorkItem = async (req, res) => {
   try {
-    const { name, price, isActive } = req.body;
-    const workItem = await WorkItem.findByIdAndUpdate(req.params.id, { name, price, isActive }, { new: true });
+    const { name, workCharge, serviceCharge, isActive } = req.body;
+    const workItem = await WorkItem.findByIdAndUpdate(req.params.id, { name, workCharge, serviceCharge, isActive }, { new: true });
     if (!workItem) return res.status(404).json({ success: false, message: 'Work item not found' });
     res.json({ success: true, message: 'Work item updated', workItem });
   } catch (error) {
@@ -516,6 +611,87 @@ const deleteWorkItem = async (req, res) => {
   }
 };
 
+// Update admin profile
+const updateProfile = async (req, res) => {
+  try {
+    const { name, password } = req.body;
+    const adminEmail = req.user.email;
+
+    console.log('Update profile request:', { adminEmail, name, hasPassword: !!password, user: req.user });
+
+    if (!adminEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'User email not found in request'
+      });
+    }
+
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name is required'
+      });
+    }
+
+    // Build update object
+    const updateData = {
+      name: name.trim(),
+      updatedAt: new Date()
+    };
+
+    // If password is provided, hash it
+    if (password && password.trim().length > 0) {
+      if (password.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password must be at least 6 characters long'
+        });
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      updateData.password = await bcrypt.hash(password, salt);
+    }
+
+    console.log('Update data:', { ...updateData, password: updateData.password ? '[HASHED]' : undefined });
+
+    // Update admin profile by email
+    const updatedAdmin = await User.findOneAndUpdate(
+      { email: adminEmail, role: 'admin' },
+      updateData,
+      { new: true }
+    );
+
+    console.log('Updated admin result:', updatedAdmin);
+
+    if (!updatedAdmin) {
+      console.log('Admin not found with email:', adminEmail);
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: {
+        id: updatedAdmin._id,
+        name: updatedAdmin.name,
+        email: updatedAdmin.email,
+        role: updatedAdmin.role
+      }
+    });
+
+  } catch (error) {
+    console.error('Update profile error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: `Server error while updating profile: ${error.message}`
+    });
+  }
+};
+
 module.exports = {
   getAllWorks,
   getDashboardStats,
@@ -526,5 +702,6 @@ module.exports = {
   createWorkItem,
   getAllWorkItems,
   updateWorkItem,
-  deleteWorkItem
+  deleteWorkItem,
+  updateProfile
 };

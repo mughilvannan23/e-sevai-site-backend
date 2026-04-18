@@ -16,27 +16,39 @@ const adminLogin = async (req, res) => {
       });
     }
 
-    const configuredAdminEmail = process.env.ADMIN_EMAIL?.toLowerCase().trim();
-    const configuredAdminPassword = process.env.ADMIN_PASSWORD?.trim();
     const normalizedEmail = email.toLowerCase().trim();
 
-    // 🔍 Validate directly against .env credentials FIRST to skip normal DB password check
-    if (normalizedEmail !== configuredAdminEmail || password !== configuredAdminPassword) {
-      console.log('❌ Invalid admin credentials provided');
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Find admin user in database to issue token
-    let adminUser = await User.findOne({ 
-      email: normalizedEmail, 
+    // 🔍 First, try to find admin in database
+    let adminUser = await User.findOne({
+      email: normalizedEmail,
       role: 'admin',
-      isActive: true 
-    });
+      isActive: true
+    }).select('+password');
 
-    if (!adminUser) {
+    if (adminUser) {
+      // ✅ Admin exists in database - verify password against stored hash
+      const isPasswordValid = await bcrypt.compare(password, adminUser.password);
+
+      if (!isPasswordValid) {
+        console.log('❌ Invalid password for database admin');
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+    } else {
+      // 🔄 No admin in database - fallback to .env credentials for first-time setup
+      const configuredAdminEmail = process.env.ADMIN_EMAIL?.toLowerCase().trim();
+      const configuredAdminPassword = process.env.ADMIN_PASSWORD?.trim();
+
+      if (normalizedEmail !== configuredAdminEmail || password !== configuredAdminPassword) {
+        console.log('❌ Invalid admin credentials provided');
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+      }
+
       console.log('⚙️ Creating admin user in database...');
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(configuredAdminPassword, salt);

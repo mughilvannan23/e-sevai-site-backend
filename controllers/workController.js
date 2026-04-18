@@ -7,7 +7,8 @@ const createWork = async (req, res) => {
   try {
     const { date, customerName, customerPhone, paymentMethod, items, amount, paymentStatus, workStatus, notes } = req.body;
 
-    let adminPrice = 0;
+    let totalWorkCharge = 0;
+    let totalServiceCharge = 0;
     const processedItems = [];
 
     if (items && Array.isArray(items)) {
@@ -15,17 +16,20 @@ const createWork = async (req, res) => {
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
-            adminPrice += selectedItem.price;
+            totalWorkCharge += selectedItem.workCharge;
+            totalServiceCharge += selectedItem.serviceCharge;
             processedItems.push({
               workItemId: item.workItemId,
               title: selectedItem.name,
-              adminPriceAtTime: selectedItem.price
+              workChargeAtTime: selectedItem.workCharge,
+              serviceChargeAtTime: selectedItem.serviceCharge
             });
           }
         } else if (item.workTitle) {
           processedItems.push({
             title: item.workTitle,
-            adminPriceAtTime: 0
+            workChargeAtTime: 0,
+            serviceChargeAtTime: 0
           });
         }
       }
@@ -39,7 +43,7 @@ const createWork = async (req, res) => {
       customerPhone,
       paymentMethod: paymentMethod || 'Hand Cash',
       items: processedItems,
-      adminPrice,
+      adminPrice: totalWorkCharge + totalServiceCharge,
       amount: parseFloat(amount),
       paymentStatus,
       workStatus,
@@ -202,28 +206,32 @@ const updateWork = async (req, res) => {
     if (notes !== undefined) work.notes = notes;
 
     if (items && Array.isArray(items)) {
-      let adminPrice = 0;
+      let totalWorkCharge = 0;
+      let totalServiceCharge = 0;
       const processedItems = [];
       for (const item of items) {
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
-            adminPrice += selectedItem.price;
+            totalWorkCharge += selectedItem.workCharge;
+            totalServiceCharge += selectedItem.serviceCharge;
             processedItems.push({
               workItemId: item.workItemId,
               title: selectedItem.name,
-              adminPriceAtTime: selectedItem.price
+              workChargeAtTime: selectedItem.workCharge,
+              serviceChargeAtTime: selectedItem.serviceCharge
             });
           }
         } else if (item.workTitle) {
           processedItems.push({
             title: item.workTitle,
-            adminPriceAtTime: 0
+            workChargeAtTime: 0,
+            serviceChargeAtTime: 0
           });
         }
       }
       work.items = processedItems;
-      work.adminPrice = adminPrice;
+      work.adminPrice = totalWorkCharge + totalServiceCharge;
     }
 
     await work.save();
