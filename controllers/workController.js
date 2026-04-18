@@ -2,6 +2,12 @@ const Work = require('../models/Work');
 const User = require('../models/User');
 const WorkItem = require('../models/WorkItem');
 
+const parseLocalDate = (dateStr) => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr.split('-');
+  return new Date(Number(year), Number(month) - 1, Number(day));
+};
+
 // Create work entry
 const createWork = async (req, res) => {
   try {
@@ -35,10 +41,27 @@ const createWork = async (req, res) => {
       }
     }
 
+    const currentTime = new Date();
+    let workDate;
+    if (date) {
+      const [year, month, day] = date.split('-');
+      workDate = new Date(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        currentTime.getHours(),
+        currentTime.getMinutes(),
+        currentTime.getSeconds(),
+        currentTime.getMilliseconds()
+      );
+    } else {
+      workDate = currentTime;
+    }
+
     // Create new work entry
     const work = new Work({
       employee: req.user._id,
-      date: new Date(date),
+      date: workDate,
       customerName,
       customerPhone,
       paymentMethod: paymentMethod || 'Hand Cash',
@@ -79,7 +102,7 @@ const getMyWorks = async (req, res) => {
     const query = { employee: req.user._id };
     
     if (date) {
-      const start = new Date(date);
+      const start = parseLocalDate(date);
       const end = new Date(start);
       end.setHours(23, 59, 59, 999);
       query.date = { $gte: start, $lte: end };
@@ -88,10 +111,11 @@ const getMyWorks = async (req, res) => {
     if (startDate || endDate) {
       query.date = {};
       if (startDate) {
-        query.date.$gte = new Date(startDate);
+        const start = parseLocalDate(startDate);
+        query.date.$gte = start;
       }
       if (endDate) {
-        const end = new Date(endDate);
+        const end = parseLocalDate(endDate);
         end.setHours(23, 59, 59, 999);
         query.date.$lte = end;
       }
@@ -196,7 +220,20 @@ const updateWork = async (req, res) => {
     }
 
     // Update fields
-    if (date) work.date = new Date(date);
+    if (date) {
+      const existingTime = work.date || new Date();
+      const [year, month, day] = date.split('-');
+      const updatedDate = new Date(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        existingTime.getHours(),
+        existingTime.getMinutes(),
+        existingTime.getSeconds(),
+        existingTime.getMilliseconds()
+      );
+      work.date = updatedDate;
+    }
     if (customerName) work.customerName = customerName;
     if (customerPhone !== undefined) work.customerPhone = customerPhone;
     if (paymentMethod) work.paymentMethod = paymentMethod;
@@ -344,7 +381,7 @@ const getMyWorkStats = async (req, res) => {
 // Get active work items for dropdown
 const getActiveWorkItems = async (req, res) => {
   try {
-    const workItems = await WorkItem.find({ isActive: true }).sort({ name: 1 });
+    const workItems = await WorkItem.find({ $or: [{ status: true }, { isActive: true }] }).sort({ name: 1 });
     res.json({
       success: true,
       workItems

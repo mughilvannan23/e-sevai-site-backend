@@ -17,6 +17,10 @@ const workItemSchema = new mongoose.Schema({
     required: [true, 'Service charge is required'],
     min: [0, 'Service charge must be positive']
   },
+  status: {
+    type: Boolean,
+    default: true
+  },
   isActive: {
     type: Boolean,
     default: true

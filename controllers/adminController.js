@@ -5,6 +5,12 @@ const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const bcrypt = require('bcryptjs');
 
+const parseLocalDate = (dateStr) => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr.split('-');
+  return new Date(Number(year), Number(month) - 1, Number(day));
+};
+
 // Get all works with filters
 const getAllWorks = async (req, res) => {
   try {
@@ -24,14 +30,14 @@ const getAllWorks = async (req, res) => {
 
     // Date range filter
     if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
+      const start = parseLocalDate(startDate);
+      const end = parseLocalDate(endDate);
       end.setHours(23, 59, 59, 999);
       query.date = { $gte: start, $lte: end };
     } else if (startDate) {
-      query.date = { $gte: new Date(startDate) };
+      query.date = { $gte: parseLocalDate(startDate) };
     } else if (endDate) {
-      const end = new Date(endDate);
+      const end = parseLocalDate(endDate);
       end.setHours(23, 59, 59, 999);
       query.date = { $lte: end };
     }
@@ -175,8 +181,8 @@ const getEmployeePerformance = async (req, res) => {
 
     // Default to current month if dates not provided
     const today = new Date();
-    const start = startDate ? new Date(startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
-    const end = endDate ? new Date(endDate) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const start = startDate ? parseLocalDate(startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
+    const end = endDate ? parseLocalDate(endDate) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
     end.setHours(23, 59, 59, 999);
 
     // Get all active employees
@@ -248,8 +254,8 @@ const getRevenueReport = async (req, res) => {
 
     // Default to current month if dates not provided
     const today = new Date();
-    const start = startDate ? new Date(startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
-    const end = endDate ? new Date(endDate) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const start = startDate ? parseLocalDate(startDate) : new Date(today.getFullYear(), today.getMonth(), 1);
+    const end = endDate ? parseLocalDate(endDate) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
     end.setHours(23, 59, 59, 999);
 
     // Group by day, month, or year
@@ -592,8 +598,13 @@ const getAllWorkItems = async (req, res) => {
 
 const updateWorkItem = async (req, res) => {
   try {
-    const { name, workCharge, serviceCharge, isActive } = req.body;
-    const workItem = await WorkItem.findByIdAndUpdate(req.params.id, { name, workCharge, serviceCharge, isActive }, { new: true });
+    const { name, workCharge, serviceCharge, status, isActive } = req.body;
+    const statusValue = status !== undefined ? status : isActive;
+    const workItem = await WorkItem.findByIdAndUpdate(
+      req.params.id,
+      { name, workCharge, serviceCharge, status: statusValue, isActive: statusValue },
+      { new: true }
+    );
     if (!workItem) return res.status(404).json({ success: false, message: 'Work item not found' });
     res.json({ success: true, message: 'Work item updated', workItem });
   } catch (error) {
