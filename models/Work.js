@@ -46,6 +46,16 @@ const workSchema = new mongoose.Schema({
       type: Number,
       required: true,
       default: 0
+    },
+    quantity: {
+      type: Number,
+      default: 1,
+      min: [1, 'Quantity must be at least 1']
+    },
+    otherCharges: {
+      type: Number,
+      default: 0,
+      min: [0, 'Other charges cannot be negative']
     }
   }],
   adminPrice: {
@@ -57,6 +67,11 @@ const workSchema = new mongoose.Schema({
     required: [true, 'Amount is required'],
     min: [0, 'Amount must be positive']
   },
+  otherCharges: {
+    type: Number,
+    default: 0,
+    min: [0, 'Other charges cannot be negative']
+  },
   paymentStatus: {
     type: String,
     enum: ['Paid', 'Pending'],
@@ -64,8 +79,8 @@ const workSchema = new mongoose.Schema({
   },
   workStatus: {
     type: String,
-    enum: ['Completed', 'In Progress'],
-    default: 'In Progress'
+    enum: ['Completed', 'Pending'],
+    default: 'Pending'
   },
   notes: {
     type: String,
@@ -83,7 +98,7 @@ const workSchema = new mongoose.Schema({
 });
 
 // Update timestamp before saving
-workSchema.pre('save', function(next) {
+workSchema.pre('save', function (next) {
   this.updatedAt = Date.now();
   next();
 });

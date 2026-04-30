@@ -10,9 +10,9 @@ const adminLogin = async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
-        message: 'Email and password are required'
+        message: 'Invalid credentials'
       });
     }
 
@@ -99,9 +99,9 @@ const employeeLogin = async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
-        message: 'Email and password are required'
+        message: 'Invalid credentials'
       });
     }
 

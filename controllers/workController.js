@@ -11,31 +11,39 @@ const parseLocalDate = (dateStr) => {
 // Create work entry
 const createWork = async (req, res) => {
   try {
-    const { date, customerName, customerPhone, paymentMethod, items, amount, paymentStatus, workStatus, notes } = req.body;
+    const { date, customerName, customerPhone, paymentMethod, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
 
     let totalWorkCharge = 0;
     let totalServiceCharge = 0;
+    let totalOtherCharges = 0;
     const processedItems = [];
 
     if (items && Array.isArray(items)) {
       for (const item of items) {
+        const qty = parseInt(item.quantity) || 1;
+        const itemOtherC = parseFloat(item.otherCharges) || 0;
+        totalOtherCharges += itemOtherC;
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
-            totalWorkCharge += selectedItem.workCharge;
-            totalServiceCharge += selectedItem.serviceCharge;
+            totalWorkCharge += selectedItem.workCharge * qty;
+            totalServiceCharge += selectedItem.serviceCharge * qty;
             processedItems.push({
               workItemId: item.workItemId,
               title: selectedItem.name,
               workChargeAtTime: selectedItem.workCharge,
-              serviceChargeAtTime: selectedItem.serviceCharge
+              serviceChargeAtTime: selectedItem.serviceCharge,
+              quantity: qty,
+              otherCharges: itemOtherC
             });
           }
         } else if (item.workTitle) {
           processedItems.push({
             title: item.workTitle,
             workChargeAtTime: 0,
-            serviceChargeAtTime: 0
+            serviceChargeAtTime: 0,
+            quantity: qty,
+            otherCharges: itemOtherC
           });
         }
       }
@@ -44,16 +52,14 @@ const createWork = async (req, res) => {
     const currentTime = new Date();
     let workDate;
     if (date) {
-      const [year, month, day] = date.split('-');
-      workDate = new Date(
-        Number(year),
-        Number(month) - 1,
-        Number(day),
-        currentTime.getHours(),
-        currentTime.getMinutes(),
-        currentTime.getSeconds(),
-        currentTime.getMilliseconds()
-      );
+      console.log('Incoming date:', date);
+      workDate = new Date(date);
+      if (isNaN(workDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date format'
+        });
+      }
     } else {
       workDate = currentTime;
     }
@@ -68,6 +74,7 @@ const createWork = async (req, res) => {
       items: processedItems,
       adminPrice: totalWorkCharge + totalServiceCharge,
       amount: parseFloat(amount),
+      otherCharges: totalOtherCharges,
       paymentStatus,
       workStatus,
       notes
@@ -97,10 +104,10 @@ const createWork = async (req, res) => {
 const getMyWorks = async (req, res) => {
   try {
     const { page = 1, limit = 10, date, startDate, endDate, status, search } = req.query;
-    
+
     // Build query
     const query = { employee: req.user._id };
-    
+
     if (date) {
       const start = parseLocalDate(date);
       const end = new Date(start);
@@ -120,11 +127,15 @@ const getMyWorks = async (req, res) => {
         query.date.$lte = end;
       }
     }
-    
+
     if (status) {
-      query.workStatus = status;
+      if (status === 'Pending') {
+        query.workStatus = { $in: ['Pending', 'In Progress'] };
+      } else {
+        query.workStatus = status;
+      }
     }
-    
+
     if (search) {
       query.$or = [
         { customerName: { $regex: search, $options: 'i' } },
@@ -167,7 +178,7 @@ const getWorkById = async (req, res) => {
   try {
     const work = await Work.findById(req.params.id)
       .populate('employee', 'name email employeeId');
-    
+
     if (!work) {
       return res.status(404).json({
         success: false,
@@ -197,13 +208,13 @@ const getWorkById = async (req, res) => {
   }
 };
 
-  // Update work entry
+// Update work entry
 const updateWork = async (req, res) => {
   try {
-    const { date, customerName, customerPhone, paymentMethod, items, amount, paymentStatus, workStatus, notes } = req.body;
+    const { date, customerName, customerPhone, paymentMethod, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
 
     const work = await Work.findById(req.params.id);
-    
+
     if (!work) {
       return res.status(404).json({
         success: false,
@@ -221,17 +232,14 @@ const updateWork = async (req, res) => {
 
     // Update fields
     if (date) {
-      const existingTime = work.date || new Date();
-      const [year, month, day] = date.split('-');
-      const updatedDate = new Date(
-        Number(year),
-        Number(month) - 1,
-        Number(day),
-        existingTime.getHours(),
-        existingTime.getMinutes(),
-        existingTime.getSeconds(),
-        existingTime.getMilliseconds()
-      );
+      console.log('Incoming date:', date);
+      const updatedDate = new Date(date);
+      if (isNaN(updatedDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date format'
+        });
+      }
       work.date = updatedDate;
     }
     if (customerName) work.customerName = customerName;
@@ -245,30 +253,39 @@ const updateWork = async (req, res) => {
     if (items && Array.isArray(items)) {
       let totalWorkCharge = 0;
       let totalServiceCharge = 0;
+      let totalOtherCharges = 0;
       const processedItems = [];
       for (const item of items) {
+        const qty = parseInt(item.quantity) || 1;
+        const itemOtherC = parseFloat(item.otherCharges) || 0;
+        totalOtherCharges += itemOtherC;
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
-            totalWorkCharge += selectedItem.workCharge;
-            totalServiceCharge += selectedItem.serviceCharge;
+            totalWorkCharge += selectedItem.workCharge * qty;
+            totalServiceCharge += selectedItem.serviceCharge * qty;
             processedItems.push({
               workItemId: item.workItemId,
               title: selectedItem.name,
               workChargeAtTime: selectedItem.workCharge,
-              serviceChargeAtTime: selectedItem.serviceCharge
+              serviceChargeAtTime: selectedItem.serviceCharge,
+              quantity: qty,
+              otherCharges: itemOtherC
             });
           }
         } else if (item.workTitle) {
           processedItems.push({
             title: item.workTitle,
             workChargeAtTime: 0,
-            serviceChargeAtTime: 0
+            serviceChargeAtTime: 0,
+            quantity: qty,
+            otherCharges: itemOtherC
           });
         }
       }
       work.items = processedItems;
       work.adminPrice = totalWorkCharge + totalServiceCharge;
+      work.otherCharges = totalOtherCharges;
     }
 
     await work.save();
@@ -295,7 +312,7 @@ const updateWork = async (req, res) => {
 const deleteWork = async (req, res) => {
   try {
     const work = await Work.findById(req.params.id);
-    
+
     if (!work) {
       return res.status(404).json({
         success: false,
@@ -360,12 +377,12 @@ const getMyWorkStats = async (req, res) => {
       stats: {
         todayWorks: todayWorks.length,
         todayEarnings: todayWorks.filter(w => w.paymentStatus === 'Paid').reduce((sum, w) => sum + w.amount, 0),
-        monthWorks: monthWorks.length,
+        monthWorks: monthWorks.filter(w => w.workStatus === 'Completed').length,
         monthEarnings: monthWorks.filter(w => w.paymentStatus === 'Paid').reduce((sum, w) => sum + w.amount, 0),
         totalWorks,
         totalEarnings: totalEarnings[0]?.total || 0,
-        pendingWorks: monthWorks.filter(w => w.workStatus === 'In Progress').length,
-        pendingPayments: monthWorks.filter(w => w.paymentStatus === 'Pending').reduce((sum, w) => sum + w.amount, 0)
+        pendingWorks: monthWorks.filter(w => ['Pending', 'In Progress'].includes(w.workStatus)).length,
+        pendingAmount: monthWorks.filter(w => w.paymentStatus === 'Pending').reduce((sum, w) => sum + w.amount, 0)
       }
     });
 
