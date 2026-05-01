@@ -16,13 +16,16 @@ const createWork = async (req, res) => {
     let totalWorkCharge = 0;
     let totalServiceCharge = 0;
     let totalOtherCharges = 0;
+    let totalDiscount = 0;
     const processedItems = [];
 
     if (items && Array.isArray(items)) {
       for (const item of items) {
         const qty = parseInt(item.quantity) || 1;
         const itemOtherC = parseFloat(item.otherCharges) || 0;
+        const itemDiscount = parseFloat(item.discount) || 0;
         totalOtherCharges += itemOtherC;
+        totalDiscount += itemDiscount;
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
@@ -35,6 +38,7 @@ const createWork = async (req, res) => {
               serviceChargeAtTime: selectedItem.serviceCharge,
               quantity: qty,
               otherCharges: itemOtherC,
+              discount: itemDiscount,
               applicationNumber: item.applicationNumber
             });
           }
@@ -45,6 +49,7 @@ const createWork = async (req, res) => {
             serviceChargeAtTime: 0,
             quantity: qty,
             otherCharges: itemOtherC,
+            discount: itemDiscount,
             applicationNumber: item.applicationNumber
           });
         }
@@ -75,6 +80,7 @@ const createWork = async (req, res) => {
       paymentMethod: paymentMethod || 'Hand Cash',
       items: processedItems,
       adminPrice: totalWorkCharge + totalServiceCharge,
+      totalDiscount: totalDiscount,
       amount: parseFloat(amount),
       otherCharges: totalOtherCharges,
       paymentStatus,
@@ -256,11 +262,14 @@ const updateWork = async (req, res) => {
       let totalWorkCharge = 0;
       let totalServiceCharge = 0;
       let totalOtherCharges = 0;
+      let totalDiscount = 0;
       const processedItems = [];
       for (const item of items) {
         const qty = parseInt(item.quantity) || 1;
         const itemOtherC = parseFloat(item.otherCharges) || 0;
+        const itemDiscount = parseFloat(item.discount) || 0;
         totalOtherCharges += itemOtherC;
+        totalDiscount += itemDiscount;
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
@@ -273,6 +282,7 @@ const updateWork = async (req, res) => {
               serviceChargeAtTime: selectedItem.serviceCharge,
               quantity: qty,
               otherCharges: itemOtherC,
+              discount: itemDiscount,
               applicationNumber: item.applicationNumber
             });
           }
@@ -283,12 +293,14 @@ const updateWork = async (req, res) => {
             serviceChargeAtTime: 0,
             quantity: qty,
             otherCharges: itemOtherC,
+            discount: itemDiscount,
             applicationNumber: item.applicationNumber
           });
         }
       }
       work.items = processedItems;
       work.adminPrice = totalWorkCharge + totalServiceCharge;
+      work.totalDiscount = totalDiscount;
       work.otherCharges = totalOtherCharges;
     }
 

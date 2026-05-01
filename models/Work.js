@@ -57,6 +57,11 @@ const workSchema = new mongoose.Schema({
       default: 0,
       min: [0, 'Other charges cannot be negative']
     },
+    discount: {
+      type: Number,
+      default: 0,
+      min: [0, 'Discount cannot be negative']
+    },
     applicationNumber: {
       type: String,
       trim: true
@@ -65,6 +70,11 @@ const workSchema = new mongoose.Schema({
   adminPrice: {
     type: Number,
     default: 0
+  },
+  totalDiscount: {
+    type: Number,
+    default: 0,
+    min: [0, 'Total discount cannot be negative']
   },
   amount: {
     type: Number,
