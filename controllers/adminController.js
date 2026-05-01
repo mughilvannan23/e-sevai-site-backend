@@ -448,6 +448,7 @@ const downloadRevenueExcel = async (req, res) => {
             { header: 'Customer Name', key: 'customerName', width: 25 },
             { header: 'Phone', key: 'phone', width: 15 },
             { header: 'Work Items', key: 'workItems', width: 35 },
+            { header: 'App. Numbers', key: 'applicationNumbers', width: 25 },
             { header: 'Amount', key: 'amount', width: 12 },
             { header: 'Payment Status', key: 'paymentStatus', width: 15 },
             { header: 'Work Status', key: 'workStatus', width: 15 },
@@ -466,12 +467,17 @@ const downloadRevenueExcel = async (req, res) => {
             
             const displayWorkStatus = work.workStatus === 'In Progress' ? 'Pending' : work.workStatus;
 
+            const appNums = work.items && work.items.length > 0
+                ? work.items.map(i => i.applicationNumber || '').filter(n => n !== '').join(', ')
+                : '-';
+
             worksheet.addRow({
                 date: formattedDate,
                 time: formattedTime,
                 customerName: work.customerName || '-',
                 phone: work.customerPhone || '-',
                 workItems: workTitles,
+                applicationNumbers: appNums || '-',
                 amount: work.amount || 0,
                 paymentStatus: work.paymentStatus || 'Pending',
                 workStatus: displayWorkStatus,
@@ -534,15 +540,16 @@ const downloadRevenuePDF = async (req, res) => {
         let y = tableTop();
         const itemX = { 
             date: 30, 
-            time: 75, 
-            customer: 115, 
-            phone: 180, 
-            items: 235, 
-            amt: 330, 
-            pStatus: 370, 
-            wStatus: 415, 
-            method: 460, 
-            notes: 510 
+            time: 70, 
+            customer: 105, 
+            phone: 165, 
+            items: 215, 
+            appNum: 295,
+            amt: 360, 
+            pStatus: 400, 
+            wStatus: 445, 
+            method: 490, 
+            notes: 535 
         };
 
         // Header
@@ -552,6 +559,7 @@ const downloadRevenuePDF = async (req, res) => {
         doc.text('Customer', itemX.customer, y);
         doc.text('Phone', itemX.phone, y);
         doc.text('Work Items', itemX.items, y);
+        doc.text('App. No', itemX.appNum, y);
         doc.text('Amount', itemX.amt, y);
         doc.text('P.Status', itemX.pStatus, y);
         doc.text('W.Status', itemX.wStatus, y);
@@ -595,10 +603,15 @@ const downloadRevenuePDF = async (req, res) => {
                 ? work.items.map(i => `${i.title} (x${i.quantity || 1})`).join(', ')
                 : work.workTitle || '-';
 
-            const custName = (work.customerName || '-').substring(0, 15);
-            const phone = (work.customerPhone || '-').substring(0, 12);
-            const titlesShort = workTitles.substring(0, 25);
-            const notesShort = (work.notes || '-').substring(0, 15);
+            const appNums = work.items && work.items.length > 0
+                ? work.items.map(i => i.applicationNumber || '').filter(n => n !== '').join(', ')
+                : '-';
+
+            const custName = (work.customerName || '-').substring(0, 12);
+            const phone = (work.customerPhone || '-').substring(0, 10);
+            const titlesShort = workTitles.substring(0, 20);
+            const appNumShort = appNums.substring(0, 15);
+            const notesShort = (work.notes || '-').substring(0, 10);
 
             doc.font('Helvetica').fontSize(6);
             doc.text(formattedDate, itemX.date, y);
@@ -606,6 +619,7 @@ const downloadRevenuePDF = async (req, res) => {
             doc.text(custName, itemX.customer, y);
             doc.text(phone, itemX.phone, y);
             doc.text(titlesShort, itemX.items, y);
+            doc.text(appNumShort, itemX.appNum, y);
             doc.text(`₹${work.amount}`, itemX.amt, y);
             doc.text(work.paymentStatus || 'Pending', itemX.pStatus, y);
             doc.text(displayWorkStatus, itemX.wStatus, y);

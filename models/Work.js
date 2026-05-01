@@ -56,6 +56,10 @@ const workSchema = new mongoose.Schema({
       type: Number,
       default: 0,
       min: [0, 'Other charges cannot be negative']
+    },
+    applicationNumber: {
+      type: String,
+      trim: true
     }
   }],
   adminPrice: {
@@ -79,8 +83,8 @@ const workSchema = new mongoose.Schema({
   },
   workStatus: {
     type: String,
-    enum: ['Completed', 'Pending'],
-    default: 'Pending'
+    enum: ['In Progress', 'Completed'],
+    default: 'In Progress'
   },
   notes: {
     type: String,

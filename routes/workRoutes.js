@@ -55,8 +55,8 @@ const workValidation = [
   body('workStatus')
     .notEmpty()
     .withMessage('Work status is required')
-    .isIn(['Completed', 'In Progress'])
-    .withMessage('Work status must be Completed or In Progress'),
+    .isIn(['In Progress', 'Completed'])
+    .withMessage('Work status must be In Progress or Completed'),
   body('notes')
     .optional()
     .isLength({ max: 500 })
@@ -88,8 +88,8 @@ const updateWorkValidation = [
     .withMessage('Payment status must be Paid or Pending'),
   body('workStatus')
     .optional()
-    .isIn(['Completed', 'In Progress'])
-    .withMessage('Work status must be Completed or In Progress'),
+    .isIn(['In Progress', 'Completed'])
+    .withMessage('Work status must be In Progress or Completed'),
   body('notes')
     .optional()
     .isLength({ max: 500 })

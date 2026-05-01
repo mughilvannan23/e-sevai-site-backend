@@ -34,7 +34,8 @@ const createWork = async (req, res) => {
               workChargeAtTime: selectedItem.workCharge,
               serviceChargeAtTime: selectedItem.serviceCharge,
               quantity: qty,
-              otherCharges: itemOtherC
+              otherCharges: itemOtherC,
+              applicationNumber: item.applicationNumber
             });
           }
         } else if (item.workTitle) {
@@ -43,7 +44,8 @@ const createWork = async (req, res) => {
             workChargeAtTime: 0,
             serviceChargeAtTime: 0,
             quantity: qty,
-            otherCharges: itemOtherC
+            otherCharges: itemOtherC,
+            applicationNumber: item.applicationNumber
           });
         }
       }
@@ -270,7 +272,8 @@ const updateWork = async (req, res) => {
               workChargeAtTime: selectedItem.workCharge,
               serviceChargeAtTime: selectedItem.serviceCharge,
               quantity: qty,
-              otherCharges: itemOtherC
+              otherCharges: itemOtherC,
+              applicationNumber: item.applicationNumber
             });
           }
         } else if (item.workTitle) {
@@ -279,7 +282,8 @@ const updateWork = async (req, res) => {
             workChargeAtTime: 0,
             serviceChargeAtTime: 0,
             quantity: qty,
-            otherCharges: itemOtherC
+            otherCharges: itemOtherC,
+            applicationNumber: item.applicationNumber
           });
         }
       }
