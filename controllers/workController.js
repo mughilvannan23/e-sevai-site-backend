@@ -11,7 +11,41 @@ const parseLocalDate = (dateStr) => {
 // Create work entry
 const createWork = async (req, res) => {
   try {
-    const { date, customerName, customerPhone, paymentMethod, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
+    const { date, customerName, customerPhone, paymentMethod, gpayAmount, cashAmount, totalAmount, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
+
+    // Validate payment amounts
+    const gpay = parseFloat(gpayAmount) || 0;
+    const cash = parseFloat(cashAmount) || 0;
+    const total = parseFloat(totalAmount) || parseFloat(amount) || 0;
+
+    if (gpay + cash !== total) {
+      return res.status(400).json({
+        success: false,
+        message: 'Total amount must equal sum of GPay and Cash amounts'
+      });
+    }
+
+    // Additional validation based on payment method
+    if (paymentMethod === 'GPay' && gpay <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPay amount is required for GPay payment method'
+      });
+    }
+
+    if (paymentMethod === 'Cash' && cash <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cash amount is required for Cash payment method'
+      });
+    }
+
+    if (paymentMethod === 'Both' && (gpay <= 0 || cash <= 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both GPay and Cash amounts are required for split payment'
+      });
+    }
 
     let totalWorkCharge = 0;
     let totalServiceCharge = 0;
@@ -77,11 +111,14 @@ const createWork = async (req, res) => {
       date: workDate,
       customerName,
       customerPhone,
-      paymentMethod: paymentMethod || 'Hand Cash',
+      paymentMethod: paymentMethod || 'Cash',
+      gpayAmount: gpay,
+      cashAmount: cash,
+      totalAmount: total,
       items: processedItems,
       adminPrice: totalWorkCharge + totalServiceCharge,
       totalDiscount: totalDiscount,
-      amount: parseFloat(amount),
+      amount: total, // Keep backward compatibility
       otherCharges: totalOtherCharges,
       paymentStatus,
       workStatus,
@@ -219,7 +256,7 @@ const getWorkById = async (req, res) => {
 // Update work entry
 const updateWork = async (req, res) => {
   try {
-    const { date, customerName, customerPhone, paymentMethod, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
+    const { date, customerName, customerPhone, paymentMethod, gpayAmount, cashAmount, totalAmount, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
 
     const work = await Work.findById(req.params.id);
 
@@ -238,6 +275,40 @@ const updateWork = async (req, res) => {
       });
     }
 
+    // Validate payment amounts
+    const gpay = parseFloat(gpayAmount) || 0;
+    const cash = parseFloat(cashAmount) || 0;
+    const total = parseFloat(totalAmount) || parseFloat(amount) || 0;
+
+    if (gpay + cash !== total) {
+      return res.status(400).json({
+        success: false,
+        message: 'Total amount must equal sum of GPay and Cash amounts'
+      });
+    }
+
+    // Additional validation based on payment method
+    if (paymentMethod === 'GPay' && gpay <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPay amount is required for GPay payment method'
+      });
+    }
+
+    if (paymentMethod === 'Cash' && cash <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cash amount is required for Cash payment method'
+      });
+    }
+
+    if (paymentMethod === 'Both' && (gpay <= 0 || cash <= 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both GPay and Cash amounts are required for split payment'
+      });
+    }
+
     // Update fields
     if (date) {
       console.log('Incoming date:', date);
@@ -253,7 +324,10 @@ const updateWork = async (req, res) => {
     if (customerName) work.customerName = customerName;
     if (customerPhone !== undefined) work.customerPhone = customerPhone;
     if (paymentMethod) work.paymentMethod = paymentMethod;
-    if (amount !== undefined) work.amount = parseFloat(amount);
+    if (gpayAmount !== undefined) work.gpayAmount = gpay;
+    if (cashAmount !== undefined) work.cashAmount = cash;
+    if (totalAmount !== undefined) work.totalAmount = total;
+    if (amount !== undefined) work.amount = total; // Keep backward compatibility
     if (paymentStatus) work.paymentStatus = paymentStatus;
     if (workStatus) work.workStatus = workStatus;
     if (notes !== undefined) work.notes = notes;
@@ -385,20 +459,20 @@ const getMyWorkStats = async (req, res) => {
 
     const totalEarnings = await Work.aggregate([
       { $match: { employee: req.user._id, paymentStatus: 'Paid' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
     ]);
 
     res.json({
       success: true,
       stats: {
         todayWorks: todayWorks.length,
-        todayEarnings: todayWorks.filter(w => w.paymentStatus === 'Paid').reduce((sum, w) => sum + w.amount, 0),
+        todayEarnings: todayWorks.filter(w => w.paymentStatus === 'Paid').reduce((sum, w) => sum + (w.totalAmount || w.amount), 0),
         monthWorks: monthWorks.filter(w => w.workStatus === 'Completed').length,
-        monthEarnings: monthWorks.filter(w => w.paymentStatus === 'Paid').reduce((sum, w) => sum + w.amount, 0),
+        monthEarnings: monthWorks.filter(w => w.paymentStatus === 'Paid').reduce((sum, w) => sum + (w.totalAmount || w.amount), 0),
         totalWorks,
         totalEarnings: totalEarnings[0]?.total || 0,
         pendingWorks: monthWorks.filter(w => ['Pending', 'In Progress'].includes(w.workStatus)).length,
-        pendingAmount: monthWorks.filter(w => w.paymentStatus === 'Pending').reduce((sum, w) => sum + w.amount, 0)
+        pendingAmount: monthWorks.filter(w => w.paymentStatus === 'Pending').reduce((sum, w) => sum + (w.totalAmount || w.amount), 0)
       }
     });
 

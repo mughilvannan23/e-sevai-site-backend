@@ -25,8 +25,24 @@ const workSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['GPay', 'Hand Cash', 'Cash', 'Card', 'Bank Transfer', 'Other'],
-    default: 'Hand Cash'
+    enum: ['GPay', 'Cash', 'Both'],
+    required: [true, 'Payment method is required'],
+    default: 'Cash'
+  },
+  gpayAmount: {
+    type: Number,
+    default: 0,
+    min: [0, 'GPay amount cannot be negative']
+  },
+  cashAmount: {
+    type: Number,
+    default: 0,
+    min: [0, 'Cash amount cannot be negative']
+  },
+  totalAmount: {
+    type: Number,
+    required: [true, 'Total amount is required'],
+    min: [0, 'Total amount must be positive']
   },
   items: [{
     workItemId: {

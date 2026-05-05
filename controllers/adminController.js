@@ -125,17 +125,17 @@ const getDashboardStats = async (req, res) => {
 
         const totalRevenue = await Work.aggregate([
             { $match: { paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: '$amount' } } }
+            { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
         ]);
 
         const monthRevenue = await Work.aggregate([
             { $match: { date: { $gte: thisMonth }, paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: '$amount' } } }
+            { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
         ]);
 
         const todayRevenue = await Work.aggregate([
             { $match: { date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: '$amount' } } }
+            { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
         ]);
 
         const pendingPaymentsCount = await Work.countDocuments({ paymentStatus: 'Pending' });
@@ -354,12 +354,8 @@ const getRevenueReport = async (req, res) => {
                     totalServiceCharge: { $sum: '$entryServiceCharge' },
                     totalBaseCost: { $sum: '$expectedRevenue' },
                     totalOtherCharges: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$otherCharges', 0] }, 0] } },
-                    totalActualCollected: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$collectedAmount', 0] } },
-                    totalDiscount: { $sum: { $ifNull: ['$totalDiscount', 0] } },
-                    totalNetProfit: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$netProfit', 0] } },
-                    totalWorks: { $sum: 1 },
-                    paidWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, 1, 0] } },
-                    pendingWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, 1, 0] } }
+                    totalGpayAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$gpayAmount', 0] }, 0] } },
+                    totalCashAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$cashAmount', 0] }, 0] } },
                 }
             },
             {
@@ -385,6 +381,8 @@ const getRevenueReport = async (req, res) => {
             totalActualCollected: item.totalActualCollected,
             totalDiscount: item.totalDiscount,
             totalNetProfit: item.totalNetProfit,
+            totalGpayAmount: item.totalGpayAmount,
+            totalCashAmount: item.totalCashAmount,
             totalWorks: item.totalWorks,
             paidWorks: item.paidWorks,
             pendingWorks: item.pendingWorks
@@ -397,7 +395,9 @@ const getRevenueReport = async (req, res) => {
             totalOtherCharges: revenueData.reduce((sum, item) => sum + (item.totalOtherCharges || 0), 0),
             totalActualCollected: revenueData.reduce((sum, item) => sum + (item.totalActualCollected || 0), 0),
             totalDiscount: revenueData.reduce((sum, item) => sum + (item.totalDiscount || 0), 0),
-            totalNetProfit: revenueData.reduce((sum, item) => sum + (item.totalNetProfit || 0), 0)
+            totalNetProfit: revenueData.reduce((sum, item) => sum + (item.totalNetProfit || 0), 0),
+            totalGpayAmount: revenueData.reduce((sum, item) => sum + (item.totalGpayAmount || 0), 0),
+            totalCashAmount: revenueData.reduce((sum, item) => sum + (item.totalCashAmount || 0), 0)
         };
 
         res.json({
@@ -459,7 +459,9 @@ const downloadRevenueExcel = async (req, res) => {
             { header: 'App. Numbers', key: 'applicationNumbers', width: 25 },
             { header: 'Work Status', key: 'workStatus', width: 15 },
             { header: 'Discount', key: 'discount', width: 12 },
-            { header: 'Total Amount', key: 'amount', width: 15 },
+            { header: 'GPay Amount', key: 'gpayAmount', width: 15 },
+            { header: 'Cash Amount', key: 'cashAmount', width: 15 },
+            { header: 'Total Amount', key: 'totalAmount', width: 15 },
             { header: 'Payment Method', key: 'paymentMethod', width: 18 },
             { header: 'Notes', key: 'notes', width: 30 }
         ];
@@ -488,9 +490,12 @@ const downloadRevenueExcel = async (req, res) => {
                 applicationNumbers: appNums || '-',
                 amount: work.amount || 0,
                 discount: work.totalDiscount || 0,
+                gpayAmount: work.gpayAmount || 0,
+                cashAmount: work.cashAmount || 0,
+                totalAmount: work.totalAmount || work.amount || 0,
                 paymentStatus: work.paymentStatus || 'Pending',
                 workStatus: displayWorkStatus,
-                paymentMethod: work.paymentMethod || 'Hand Cash',
+                paymentMethod: work.paymentMethod || 'Cash',
                 notes: work.notes || '-'
             });
         });
@@ -549,17 +554,19 @@ const downloadRevenuePDF = async (req, res) => {
         let y = tableTop();
         const itemX = { 
             date: 30, 
-            time: 65, 
-            customer: 95, 
-            phone: 155, 
-            items: 205, 
-            appNum: 285,
-            amt: 350, 
-            disc: 390,
-            pStatus: 425, 
-            wStatus: 465, 
-            method: 510, 
-            notes: 555 
+            time: 60, 
+            customer: 85, 
+            phone: 135, 
+            items: 175, 
+            appNum: 235,
+            gpay: 285,
+            cash: 315,
+            total: 345, 
+            disc: 375,
+            pStatus: 405, 
+            wStatus: 435, 
+            method: 465, 
+            notes: 510 
         };
 
         // Header
@@ -570,7 +577,9 @@ const downloadRevenuePDF = async (req, res) => {
         doc.text('Phone', itemX.phone, y);
         doc.text('Work Items', itemX.items, y);
         doc.text('App. No', itemX.appNum, y);
-        doc.text('Amount', itemX.amt, y);
+        doc.text('GPay', itemX.gpay, y);
+        doc.text('Cash', itemX.cash, y);
+        doc.text('Total', itemX.total, y);
         doc.text('Disc', itemX.disc, y);
         doc.text('P.Status', itemX.pStatus, y);
         doc.text('W.Status', itemX.wStatus, y);
@@ -595,7 +604,10 @@ const downloadRevenuePDF = async (req, res) => {
                 doc.text('Customer', itemX.customer, y);
                 doc.text('Phone', itemX.phone, y);
                 doc.text('Work Items', itemX.items, y);
-                doc.text('Amount', itemX.amt, y);
+                doc.text('App. No', itemX.appNum, y);
+                doc.text('GPay', itemX.gpay, y);
+                doc.text('Cash', itemX.cash, y);
+                doc.text('Total', itemX.total, y);
                 doc.text('Disc', itemX.disc, y);
                 doc.text('P.Status', itemX.pStatus, y);
                 doc.text('W.Status', itemX.wStatus, y);
@@ -632,7 +644,9 @@ const downloadRevenuePDF = async (req, res) => {
             doc.text(phone, itemX.phone, y);
             doc.text(titlesShort, itemX.items, y);
             doc.text(appNumShort, itemX.appNum, y);
-            doc.text(`₹${work.amount}`, itemX.amt, y);
+            doc.text(`₹${work.gpayAmount || 0}`, itemX.gpay, y);
+            doc.text(`₹${work.cashAmount || 0}`, itemX.cash, y);
+            doc.text(`₹${work.totalAmount || work.amount || 0}`, itemX.total, y);
             doc.text(`₹${work.totalDiscount || 0}`, itemX.disc, y);
             doc.text(work.paymentStatus || 'Pending', itemX.pStatus, y);
             doc.text(displayWorkStatus, itemX.wStatus, y);
@@ -645,9 +659,11 @@ const downloadRevenuePDF = async (req, res) => {
         doc.moveTo(30, y).lineTo(565, y).stroke();
         y += 5;
         doc.font('Helvetica-Bold').fontSize(8);
-        const totalAmt = works.reduce((sum, w) => sum + (w.amount || 0), 0);
+        const totalGpay = works.reduce((sum, w) => sum + (w.gpayAmount || 0), 0);
+        const totalCash = works.reduce((sum, w) => sum + (w.cashAmount || 0), 0);
+        const totalAmt = works.reduce((sum, w) => sum + (w.totalAmount || w.amount || 0), 0);
         const totalDisc = works.reduce((sum, w) => sum + (w.totalDiscount || 0), 0);
-        doc.text(`Total Discount: ₹${totalDisc} | Total Amount Collected: ₹${totalAmt}`, 30, y, { align: 'right' });
+        doc.text(`Total GPay: ₹${totalGpay} | Total Cash: ₹${totalCash} | Total Amount: ₹${totalAmt} | Total Discount: ₹${totalDisc}`, 30, y, { align: 'right' });
 
         doc.end();
     } catch (error) {

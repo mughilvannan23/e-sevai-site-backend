@@ -9,6 +9,8 @@ const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    console.log('Admin login attempt with email:', email);
+
     if (!email || !password) {
       return res.status(401).json({
         success: false,
@@ -17,6 +19,7 @@ const adminLogin = async (req, res) => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+    console.log('Normalized email:', normalizedEmail);
 
     // 🔍 First, try to find admin in database
     let adminUser = await User.findOne({
@@ -25,12 +28,14 @@ const adminLogin = async (req, res) => {
       isActive: true
     }).select('+password');
 
+    console.log('Admin user found in DB:', !!adminUser);
+
     if (adminUser) {
       // ✅ Admin exists in database - verify password against stored hash
       const isPasswordValid = await bcrypt.compare(password, adminUser.password);
 
       if (!isPasswordValid) {
-        console.log('❌ Invalid password for database admin');
+        console.log('Invalid password for database admin');
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
@@ -41,8 +46,15 @@ const adminLogin = async (req, res) => {
       const configuredAdminEmail = process.env.ADMIN_EMAIL?.toLowerCase().trim();
       const configuredAdminPassword = process.env.ADMIN_PASSWORD?.trim();
 
+      console.log('Checking .env credentials:');
+      console.log('  Input email:', normalizedEmail);
+      console.log('  Expected email:', configuredAdminEmail);
+      console.log('  Input password:', password);
+      console.log('  Email match:', normalizedEmail === configuredAdminEmail);
+      console.log('  Password match:', password === configuredAdminPassword);
+
       if (normalizedEmail !== configuredAdminEmail || password !== configuredAdminPassword) {
-        console.log('❌ Invalid admin credentials provided');
+        console.log('Invalid admin credentials provided');
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
