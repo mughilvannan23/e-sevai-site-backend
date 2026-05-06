@@ -11,6 +11,7 @@ const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const workRoutes = require('./routes/workRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const purchaseRoutes = require('./routes/purchaseRoutes');
 
 const app = express();
 
@@ -34,7 +35,7 @@ app.use(cors({
 
 // Validate required environment values before startup
 const validateEnvironment = () => {
-  const required = ['MONGODB_URI', 'JWT_SECRET', 'ADMIN_EMAIL'];
+  const required = ['MONGODB_URI', 'JWT_SECRET', 'ADMIN_MOBILE'];
   let missing = [];
   required.forEach((key) => {
     if (!process.env[key]) {
@@ -93,6 +94,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/works', workRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/purchases', purchaseRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

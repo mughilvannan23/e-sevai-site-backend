@@ -4,33 +4,27 @@ const { sendWelcomeEmail } = require('../utils/email');
 // Create employee
 const createEmployee = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, mobile, password, email } = req.body;
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const existingUser = await User.findOne({ mobile: mobile.trim() });
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        message: 'User with this email already exists.'
+        message: 'User with this mobile number already exists.'
       });
     }
 
     // Create new employee
     const user = new User({
       name,
-      email: email.toLowerCase(),
+      mobile: mobile.trim(),
+      email: email ? email.toLowerCase() : null,
       password,
       role: 'employee'
     });
 
     await user.save();
-
-    // Send welcome email
-    try {
-      await sendWelcomeEmail(email, name, password);
-    } catch (emailError) {
-      console.error('Failed to send welcome email:', emailError);
-    }
 
     res.status(201).json({
       success: true,
@@ -38,6 +32,7 @@ const createEmployee = async (req, res) => {
       user: {
         id: user._id,
         name: user.name,
+        mobile: user.mobile,
         email: user.email,
         role: user.role,
         employeeId: user.employeeId,
@@ -49,7 +44,7 @@ const createEmployee = async (req, res) => {
     console.error('Create employee error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while creating employee.'
+      message: error.message || 'Server error while creating employee.'
     });
   }
 };
@@ -65,7 +60,7 @@ const getEmployees = async (req, res) => {
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
+        { mobile: { $regex: search, $options: 'i' } },
         { employeeId: { $regex: search, $options: 'i' } }
       ];
     }
@@ -145,24 +140,25 @@ const updateEmployee = async (req, res) => {
       });
     }
 
-    const { name, email, isActive, password } = req.body;
+    const { name, mobile, isActive, password, email } = req.body;
 
-    // Check if email is already taken by another user
-    if (email && email.toLowerCase() !== user.email) {
+    // Check if mobile is already taken by another user
+    if (mobile && mobile.trim() !== user.mobile) {
       const existingUser = await User.findOne({ 
-        email: email.toLowerCase(), 
+        mobile: mobile.trim(), 
         _id: { $ne: user._id } 
       });
       if (existingUser) {
         return res.status(400).json({
           success: false,
-          message: 'Email is already in use.'
+          message: 'Mobile number is already in use.'
         });
       }
     }
 
     // Update fields manually
     user.name = name || user.name;
+    user.mobile = mobile ? mobile.trim() : user.mobile;
     user.email = email ? email.toLowerCase() : user.email;
     if (isActive !== undefined) {
       user.isActive = isActive;
@@ -182,6 +178,7 @@ const updateEmployee = async (req, res) => {
       user: {
         id: user._id,
         name: user.name,
+        mobile: user.mobile,
         email: user.email,
         role: user.role,
         employeeId: user.employeeId,
@@ -193,7 +190,7 @@ const updateEmployee = async (req, res) => {
     console.error('Update employee error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while updating employee.'
+      message: error.message || 'Server error while updating employee.'
     });
   }
 };

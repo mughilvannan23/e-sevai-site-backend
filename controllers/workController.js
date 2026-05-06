@@ -11,42 +11,45 @@ const parseLocalDate = (dateStr) => {
 // Create work entry
 const createWork = async (req, res) => {
   try {
-    const { date, customerName, customerPhone, paymentMethod, gpayAmount, cashAmount, totalAmount, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
+    console.log("WORK ADD DATA:", req.body);
+    
+    let { 
+      date, 
+      customerName, 
+      customerPhone, 
+      paymentMethod, 
+      gpayAmount = 0, 
+      cashAmount = 0, 
+      items, 
+      paymentStatus, 
+      workStatus, 
+      notes,
+      applicationFee = 0 
+    } = req.body;
 
-    // Validate payment amounts
-    const gpay = parseFloat(gpayAmount) || 0;
-    const cash = parseFloat(cashAmount) || 0;
-    const total = parseFloat(totalAmount) || parseFloat(amount) || 0;
+    // Convert to numbers
+    gpayAmount = Number(gpayAmount) || 0;
+    cashAmount = Number(cashAmount) || 0;
+    let totalAmount = 0;
 
-    if (gpay + cash !== total) {
-      return res.status(400).json({
-        success: false,
-        message: 'Total amount must equal sum of GPay and Cash amounts'
-      });
+    // Payment Logic as requested
+    if (paymentMethod === "GPay") {
+      totalAmount = gpayAmount;
+      cashAmount = 0;
+    } else if (paymentMethod === "Cash") {
+      totalAmount = cashAmount;
+      gpayAmount = 0;
+    } else if (paymentMethod === "Both") {
+      totalAmount = gpayAmount + cashAmount;
+      if (totalAmount <= 0) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Invalid split amount. Total must be greater than 0." 
+        });
+      }
     }
 
-    // Additional validation based on payment method
-    if (paymentMethod === 'GPay' && gpay <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'GPay amount is required for GPay payment method'
-      });
-    }
-
-    if (paymentMethod === 'Cash' && cash <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cash amount is required for Cash payment method'
-      });
-    }
-
-    if (paymentMethod === 'Both' && (gpay <= 0 || cash <= 0)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Both GPay and Cash amounts are required for split payment'
-      });
-    }
-
+    // Process items for charge calculations
     let totalWorkCharge = 0;
     let totalServiceCharge = 0;
     let totalOtherCharges = 0;
@@ -60,6 +63,7 @@ const createWork = async (req, res) => {
         const itemDiscount = parseFloat(item.discount) || 0;
         totalOtherCharges += itemOtherC;
         totalDiscount += itemDiscount;
+        
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
@@ -91,41 +95,31 @@ const createWork = async (req, res) => {
     }
 
     const currentTime = new Date();
-    let workDate;
-    if (date) {
-      console.log('Incoming date:', date);
-      workDate = new Date(date);
-      if (isNaN(workDate.getTime())) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid date format'
-        });
-      }
-    } else {
+    let workDate = date ? new Date(date) : currentTime;
+    if (isNaN(workDate.getTime())) {
       workDate = currentTime;
     }
 
-    // Create new work entry
-    const work = new Work({
-      employee: req.user._id,
+    // Create work entry (using 'employee' field as per model)
+    const work = await Work.create({
+      employee: req.user.id,
       date: workDate,
       customerName,
       customerPhone,
-      paymentMethod: paymentMethod || 'Cash',
-      gpayAmount: gpay,
-      cashAmount: cash,
-      totalAmount: total,
+      paymentMethod,
+      gpayAmount,
+      cashAmount,
+      totalAmount,
+      amount: totalAmount, // Sync with amount for backward compatibility
       items: processedItems,
       adminPrice: totalWorkCharge + totalServiceCharge,
       totalDiscount: totalDiscount,
-      amount: total, // Keep backward compatibility
       otherCharges: totalOtherCharges,
-      paymentStatus,
-      workStatus,
-      notes
+      paymentStatus: paymentStatus || 'Pending',
+      workStatus: workStatus || 'In Progress',
+      notes,
+      applicationFee: Number(applicationFee) || 0
     });
-
-    await work.save();
 
     // Populate employee details
     await work.populate('employee', 'name email employeeId');
@@ -256,7 +250,20 @@ const getWorkById = async (req, res) => {
 // Update work entry
 const updateWork = async (req, res) => {
   try {
-    const { date, customerName, customerPhone, paymentMethod, gpayAmount, cashAmount, totalAmount, items, amount, otherCharges, paymentStatus, workStatus, notes } = req.body;
+    let { 
+      date, 
+      customerName, 
+      customerPhone, 
+      paymentMethod, 
+      gpayAmount = 0, 
+      cashAmount = 0, 
+      items, 
+      paymentStatus, 
+      workStatus, 
+      notes,
+      applicationFee
+ 
+    } = req.body;
 
     const work = await Work.findById(req.params.id);
 
@@ -268,69 +275,53 @@ const updateWork = async (req, res) => {
     }
 
     // Check if user can update this work
-    if (req.user.role === 'employee' && work.employee.toString() !== req.user._id.toString()) {
+    if (req.user.role === 'employee' && work.employee.toString() !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: 'Access denied.'
       });
     }
 
-    // Validate payment amounts
-    const gpay = parseFloat(gpayAmount) || 0;
-    const cash = parseFloat(cashAmount) || 0;
-    const total = parseFloat(totalAmount) || parseFloat(amount) || 0;
+    // Convert to numbers
+    gpayAmount = Number(gpayAmount) || 0;
+    cashAmount = Number(cashAmount) || 0;
+    let totalAmount = 0;
 
-    if (gpay + cash !== total) {
-      return res.status(400).json({
-        success: false,
-        message: 'Total amount must equal sum of GPay and Cash amounts'
-      });
-    }
-
-    // Additional validation based on payment method
-    if (paymentMethod === 'GPay' && gpay <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'GPay amount is required for GPay payment method'
-      });
-    }
-
-    if (paymentMethod === 'Cash' && cash <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cash amount is required for Cash payment method'
-      });
-    }
-
-    if (paymentMethod === 'Both' && (gpay <= 0 || cash <= 0)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Both GPay and Cash amounts are required for split payment'
-      });
+    // Payment Logic as requested
+    if (paymentMethod === "GPay") {
+      totalAmount = gpayAmount;
+      cashAmount = 0;
+    } else if (paymentMethod === "Cash") {
+      totalAmount = cashAmount;
+      gpayAmount = 0;
+    } else if (paymentMethod === "Both") {
+      totalAmount = gpayAmount + cashAmount;
+      if (totalAmount <= 0) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Invalid split amount. Total must be greater than 0." 
+        });
+      }
     }
 
     // Update fields
     if (date) {
-      console.log('Incoming date:', date);
       const updatedDate = new Date(date);
-      if (isNaN(updatedDate.getTime())) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid date format'
-        });
+      if (!isNaN(updatedDate.getTime())) {
+        work.date = updatedDate;
       }
-      work.date = updatedDate;
     }
     if (customerName) work.customerName = customerName;
     if (customerPhone !== undefined) work.customerPhone = customerPhone;
     if (paymentMethod) work.paymentMethod = paymentMethod;
-    if (gpayAmount !== undefined) work.gpayAmount = gpay;
-    if (cashAmount !== undefined) work.cashAmount = cash;
-    if (totalAmount !== undefined) work.totalAmount = total;
-    if (amount !== undefined) work.amount = total; // Keep backward compatibility
+    work.gpayAmount = gpayAmount;
+    work.cashAmount = cashAmount;
+    work.totalAmount = totalAmount;
+    work.amount = totalAmount; // Sync for backward compatibility
     if (paymentStatus) work.paymentStatus = paymentStatus;
     if (workStatus) work.workStatus = workStatus;
     if (notes !== undefined) work.notes = notes;
+    if (applicationFee !== undefined) work.applicationFee = Number(applicationFee) || 0;
 
     if (items && Array.isArray(items)) {
       let totalWorkCharge = 0;
@@ -502,6 +493,26 @@ const getActiveWorkItems = async (req, res) => {
   }
 };
 
+// Get total shop balance (cash only)
+const getShopBalance = async (req, res) => {
+  try {
+    // Only calculate from Paid entries
+    const works = await Work.find({ paymentStatus: 'Paid' });
+    const totalCash = works.reduce((sum, w) => sum + (w.cashAmount || 0), 0);
+
+    res.json({
+      success: true,
+      shopBalance: totalCash
+    });
+  } catch (error) {
+    console.error('SHOP BALANCE ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching shop balance.'
+    });
+  }
+};
+
 module.exports = {
   createWork,
   getMyWorks,
@@ -509,5 +520,6 @@ module.exports = {
   updateWork,
   deleteWork,
   getMyWorkStats,
-  getActiveWorkItems
+  getActiveWorkItems,
+  getShopBalance
 };

@@ -102,6 +102,10 @@ const workSchema = new mongoose.Schema({
     default: 0,
     min: [0, 'Other charges cannot be negative']
   },
+  applicationFee: {
+    type: Number,
+    default: 0
+  },
   paymentStatus: {
     type: String,
     enum: ['Paid', 'Pending'],

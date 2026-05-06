@@ -8,9 +8,10 @@ const {
   updateWork,
   deleteWork,
   getMyWorkStats,
-  getActiveWorkItems
+  getActiveWorkItems,
+  getShopBalance
 } = require('../controllers/workController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeEmployee } = require('../middleware/auth');
 
 const validateRequest = (req, res, next) => {
   const errors = validationResult(req);
@@ -101,6 +102,7 @@ router.post('/', authenticate, workValidation, validateRequest, createWork);
 router.get('/', authenticate, getMyWorks);
 router.get('/stats', authenticate, getMyWorkStats);
 router.get('/items/active', authenticate, getActiveWorkItems);
+router.get('/employee/shop-balance', authenticate, authorizeEmployee, getShopBalance);
 router.get('/:id', authenticate, getWorkById);
 router.put('/:id', authenticate, updateWorkValidation, validateRequest, updateWork);
 router.delete('/:id', authenticate, deleteWork);

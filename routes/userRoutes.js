@@ -30,7 +30,12 @@ const employeeValidation = [
     .withMessage('Name is required')
     .isLength({ min: 2, max: 50 })
     .withMessage('Name must be between 2 and 50 characters'),
+  body('mobile')
+    .isLength({ min: 10, max: 10 })
+    .isNumeric()
+    .withMessage('Please enter a valid 10-digit mobile number'),
   body('email')
+    .optional({ checkFalsy: true })
     .isEmail()
     .normalizeEmail()
     .withMessage('Please enter a valid email'),
@@ -44,8 +49,13 @@ const updateEmployeeValidation = [
     .optional()
     .isLength({ min: 2, max: 50 })
     .withMessage('Name must be between 2 and 50 characters'),
-  body('email')
+  body('mobile')
     .optional()
+    .isLength({ min: 10, max: 10 })
+    .isNumeric()
+    .withMessage('Please enter a valid 10-digit mobile number'),
+  body('email')
+    .optional({ checkFalsy: true })
     .isEmail()
     .normalizeEmail()
     .withMessage('Please enter a valid email'),

@@ -23,24 +23,13 @@ const validateRequest = (req, res, next) => {
 
 // Validation rules
 const loginValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please enter a valid email'),
+  body('mobile')
+    .isLength({ min: 10, max: 10 })
+    .isNumeric()
+    .withMessage('Please enter a valid 10-digit mobile number'),
   body('password')
     .notEmpty()
     .withMessage('Password is required')
-];
-
-const otpValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please enter a valid email'),
-  body('otp')
-    .isLength({ min: 6, max: 6 })
-    .isNumeric()
-    .withMessage('OTP must be 6 digits')
 ];
 
 const changePasswordValidation = [

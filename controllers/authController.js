@@ -7,23 +7,20 @@ const User = require('../models/User');
  */
 const adminLogin = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { mobile, password } = req.body;
 
-    console.log('Admin login attempt with email:', email);
+    console.log('Admin login attempt with mobile:', mobile);
 
-    if (!email || !password) {
+    if (!mobile || !password) {
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-    console.log('Normalized email:', normalizedEmail);
-
     // 🔍 First, try to find admin in database
     let adminUser = await User.findOne({
-      email: normalizedEmail,
+      mobile: mobile.trim(),
       role: 'admin',
       isActive: true
     }).select('+password');
@@ -43,17 +40,16 @@ const adminLogin = async (req, res) => {
       }
     } else {
       // 🔄 No admin in database - fallback to .env credentials for first-time setup
-      const configuredAdminEmail = process.env.ADMIN_EMAIL?.toLowerCase().trim();
+      const configuredAdminMobile = process.env.ADMIN_MOBILE?.trim();
       const configuredAdminPassword = process.env.ADMIN_PASSWORD?.trim();
 
       console.log('Checking .env credentials:');
-      console.log('  Input email:', normalizedEmail);
-      console.log('  Expected email:', configuredAdminEmail);
-      console.log('  Input password:', password);
-      console.log('  Email match:', normalizedEmail === configuredAdminEmail);
+      console.log('  Input mobile:', mobile);
+      console.log('  Expected mobile:', configuredAdminMobile);
+      console.log('  Mobile match:', mobile === configuredAdminMobile);
       console.log('  Password match:', password === configuredAdminPassword);
 
-      if (normalizedEmail !== configuredAdminEmail || password !== configuredAdminPassword) {
+      if (mobile !== configuredAdminMobile || password !== configuredAdminPassword) {
         console.log('Invalid admin credentials provided');
         return res.status(401).json({
           success: false,
@@ -67,7 +63,7 @@ const adminLogin = async (req, res) => {
 
       adminUser = new User({
         name: 'System Administrator',
-        email: configuredAdminEmail,
+        mobile: configuredAdminMobile,
         password: hashedPassword,
         role: 'admin',
         isActive: true
@@ -89,7 +85,7 @@ const adminLogin = async (req, res) => {
       user: {
         id: adminUser._id,
         name: adminUser.name,
-        email: adminUser.email,
+        mobile: adminUser.mobile,
         role: adminUser.role
       }
     });
@@ -108,9 +104,9 @@ const adminLogin = async (req, res) => {
  */
 const employeeLogin = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { mobile, password } = req.body;
 
-    if (!email || !password) {
+    if (!mobile || !password) {
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -119,7 +115,7 @@ const employeeLogin = async (req, res) => {
 
     // Find active employee
     const user = await User.findOne({
-      email: email.toLowerCase().trim(),
+      mobile: mobile.trim(),
       role: 'employee',
       isActive: true
     }).select('+password');
@@ -148,7 +144,7 @@ const employeeLogin = async (req, res) => {
     // Generate JWT Token
     const token = user.generateAuthToken();
 
-    console.log(`✅ Employee login: ${user.email}`);
+    console.log(`✅ Employee login: ${user.mobile}`);
 
     return res.status(200).json({
       success: true,
@@ -157,7 +153,7 @@ const employeeLogin = async (req, res) => {
       user: {
         id: user._id,
         name: user.name,
-        email: user.email,
+        mobile: user.mobile,
         role: user.role,
         employeeId: user.employeeId,
         lastLogin: user.lastLogin
@@ -183,7 +179,7 @@ const getProfile = async (req, res) => {
       user: {
         id: req.user._id,
         name: req.user.name,
-        email: req.user.email,
+        mobile: req.user.mobile,
         role: req.user.role,
         employeeId: req.user.employeeId,
         lastLogin: req.user.lastLogin

@@ -4,6 +4,7 @@ const WorkItem = require('../models/WorkItem');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const bcrypt = require('bcryptjs');
+const purchaseController = require('./purchaseController');
 
 const parseLocalDate = (dateStr) => {
     if (!dateStr) return null;
@@ -71,7 +72,7 @@ const getAllWorks = async (req, res) => {
 
         // Get works with pagination
         const works = await Work.find(query)
-            .populate('employee', 'name email employeeId')
+            .populate('employee', 'name mobile employeeId')
             .sort({ date: -1, createdAt: -1 })
             .limit(limit * 1)
             .skip((page - 1) * limit);
@@ -123,19 +124,19 @@ const getDashboardStats = async (req, res) => {
 
         const totalWorks = await Work.countDocuments({});
 
-        const totalRevenue = await Work.aggregate([
+        const totalRevenueAgg = await Work.aggregate([
             { $match: { paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
+            { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
         ]);
 
-        const monthRevenue = await Work.aggregate([
+        const monthRevenueAgg = await Work.aggregate([
             { $match: { date: { $gte: thisMonth }, paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
+            { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
         ]);
 
-        const todayRevenue = await Work.aggregate([
+        const todayRevenueAgg = await Work.aggregate([
             { $match: { date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
+            { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
         ]);
 
         const pendingPaymentsCount = await Work.countDocuments({ paymentStatus: 'Pending' });
@@ -171,6 +172,7 @@ const getDashboardStats = async (req, res) => {
             }
         ]);
         const totalNetProfit = totalProfitAgg[0]?.totalProfit || 0;
+        const shopBalance = await purchaseController.getShopBalanceInternal();
 
         res.json({
             success: true,
@@ -186,11 +188,12 @@ const getDashboardStats = async (req, res) => {
                     completed: completedWorks
                 },
                 revenue: {
-                    today: todayRevenue[0]?.total || 0,
-                    month: monthRevenue[0]?.total || 0,
-                    total: totalRevenue[0]?.total || 0,
+                    today: todayRevenueAgg[0]?.total || 0,
+                    month: monthRevenueAgg[0]?.total || 0,
+                    total: totalRevenueAgg[0]?.total || 0,
                     pending: pendingPaymentsCount,
-                    profit: totalNetProfit
+                    profit: totalNetProfit,
+                    shopBalance: shopBalance
                 }
             }
         });
@@ -239,7 +242,7 @@ const getEmployeePerformance = async (req, res) => {
                     employee: {
                         id: employee._id,
                         name: employee.name,
-                        email: employee.email,
+                        mobile: employee.mobile,
                         employeeId: employee.employeeId
                     },
                     stats: {
@@ -356,6 +359,13 @@ const getRevenueReport = async (req, res) => {
                     totalOtherCharges: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$otherCharges', 0] }, 0] } },
                     totalGpayAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$gpayAmount', 0] }, 0] } },
                     totalCashAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$cashAmount', 0] }, 0] } },
+                    totalApplicationFee: { $sum: { $ifNull: ['$applicationFee', 0] } },
+                    totalActualCollected: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$collectedAmount', 0] } },
+                    totalDiscount: { $sum: { $ifNull: ['$totalDiscount', 0] } },
+                    totalNetProfit: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$netProfit', 0] } },
+                    totalWorks: { $sum: 1 },
+                    paidWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, 1, 0] } },
+                    pendingWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, 1, 0] } }
                 }
             },
             {
@@ -383,6 +393,7 @@ const getRevenueReport = async (req, res) => {
             totalNetProfit: item.totalNetProfit,
             totalGpayAmount: item.totalGpayAmount,
             totalCashAmount: item.totalCashAmount,
+            totalApplicationFee: item.totalApplicationFee,
             totalWorks: item.totalWorks,
             paidWorks: item.paidWorks,
             pendingWorks: item.pendingWorks
@@ -397,7 +408,8 @@ const getRevenueReport = async (req, res) => {
             totalDiscount: revenueData.reduce((sum, item) => sum + (item.totalDiscount || 0), 0),
             totalNetProfit: revenueData.reduce((sum, item) => sum + (item.totalNetProfit || 0), 0),
             totalGpayAmount: revenueData.reduce((sum, item) => sum + (item.totalGpayAmount || 0), 0),
-            totalCashAmount: revenueData.reduce((sum, item) => sum + (item.totalCashAmount || 0), 0)
+            totalCashAmount: revenueData.reduce((sum, item) => sum + (item.totalCashAmount || 0), 0),
+            totalApplicationFee: revenueData.reduce((sum, item) => sum + (item.totalApplicationFee || 0), 0)
         };
 
         res.json({
@@ -461,6 +473,7 @@ const downloadRevenueExcel = async (req, res) => {
             { header: 'Discount', key: 'discount', width: 12 },
             { header: 'GPay Amount', key: 'gpayAmount', width: 15 },
             { header: 'Cash Amount', key: 'cashAmount', width: 15 },
+            { header: 'Application Fee', key: 'applicationFee', width: 15 },
             { header: 'Total Amount', key: 'totalAmount', width: 15 },
             { header: 'Payment Method', key: 'paymentMethod', width: 18 },
             { header: 'Notes', key: 'notes', width: 30 }
@@ -492,6 +505,7 @@ const downloadRevenueExcel = async (req, res) => {
                 discount: work.totalDiscount || 0,
                 gpayAmount: work.gpayAmount || 0,
                 cashAmount: work.cashAmount || 0,
+                applicationFee: work.applicationFee || 0,
                 totalAmount: work.totalAmount || work.amount || 0,
                 paymentStatus: work.paymentStatus || 'Pending',
                 workStatus: displayWorkStatus,
@@ -661,9 +675,10 @@ const downloadRevenuePDF = async (req, res) => {
         doc.font('Helvetica-Bold').fontSize(8);
         const totalGpay = works.reduce((sum, w) => sum + (w.gpayAmount || 0), 0);
         const totalCash = works.reduce((sum, w) => sum + (w.cashAmount || 0), 0);
+        const totalAppFee = works.reduce((sum, w) => sum + (w.applicationFee || 0), 0);
         const totalAmt = works.reduce((sum, w) => sum + (w.totalAmount || w.amount || 0), 0);
         const totalDisc = works.reduce((sum, w) => sum + (w.totalDiscount || 0), 0);
-        doc.text(`Total GPay: ₹${totalGpay} | Total Cash: ₹${totalCash} | Total Amount: ₹${totalAmt} | Total Discount: ₹${totalDisc}`, 30, y, { align: 'right' });
+        doc.text(`Total GPay: ₹${totalGpay} | Total Cash: ₹${totalCash} | Total App Fee: ₹${totalAppFee} | Total Amount: ₹${totalAmt} | Total Discount: ₹${totalDisc}`, 30, y, { align: 'right' });
 
         doc.end();
     } catch (error) {
@@ -770,15 +785,15 @@ const deleteWorkItem = async (req, res) => {
 // Update admin profile
 const updateProfile = async (req, res) => {
     try {
-        const { name, password } = req.body;
-        const adminEmail = req.user.email;
+        const { name, password, mobile } = req.body;
+        const adminId = req.user.id || req.user._id;
 
-        console.log('Update profile request:', { adminEmail, name, hasPassword: !!password, user: req.user });
+        console.log('Update profile request:', { adminId, name, hasPassword: !!password, user: req.user });
 
-        if (!adminEmail) {
+        if (!adminId) {
             return res.status(400).json({
                 success: false,
-                message: 'User email not found in request'
+                message: 'User ID not found in request'
             });
         }
 
@@ -795,6 +810,22 @@ const updateProfile = async (req, res) => {
             updatedAt: new Date()
         };
 
+        if (mobile) {
+            updateData.mobile = mobile.trim();
+            
+            // Check if mobile is already taken
+            const existingUser = await User.findOne({ 
+                mobile: updateData.mobile, 
+                _id: { $ne: adminId } 
+            });
+            if (existingUser) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Mobile number is already in use'
+                });
+            }
+        }
+
         // If password is provided, hash it
         if (password && password.trim().length > 0) {
             if (password.length < 6) {
@@ -810,9 +841,9 @@ const updateProfile = async (req, res) => {
 
         console.log('Update data:', { ...updateData, password: updateData.password ? '[HASHED]' : undefined });
 
-        // Update admin profile by email
-        const updatedAdmin = await User.findOneAndUpdate(
-            { email: adminEmail, role: 'admin' },
+        // Update admin profile by ID
+        const updatedAdmin = await User.findByIdAndUpdate(
+            adminId,
             updateData,
             { new: true }
         );
@@ -820,7 +851,6 @@ const updateProfile = async (req, res) => {
         console.log('Updated admin result:', updatedAdmin);
 
         if (!updatedAdmin) {
-            console.log('Admin not found with email:', adminEmail);
             return res.status(404).json({
                 success: false,
                 message: 'Admin not found'
@@ -833,14 +863,13 @@ const updateProfile = async (req, res) => {
             user: {
                 id: updatedAdmin._id,
                 name: updatedAdmin.name,
-                email: updatedAdmin.email,
+                mobile: updatedAdmin.mobile,
                 role: updatedAdmin.role
             }
         });
 
     } catch (error) {
         console.error('Update profile error:', error);
-        console.error('Error stack:', error.stack);
         res.status(500).json({
             success: false,
             message: `Server error while updating profile: ${error.message}`
