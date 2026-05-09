@@ -5,6 +5,7 @@ const Work = require('../models/Work');
 const calculateBalance = async () => {
     // Sum all cashAmount from Work model
     const totalCashResult = await Work.aggregate([
+        { $match: { paymentStatus: 'Paid' } },
         { $group: { _id: null, total: { $sum: '$cashAmount' } } }
     ]);
     const totalCash = totalCashResult[0]?.total || 0;
@@ -15,7 +16,19 @@ const calculateBalance = async () => {
     ]);
     const totalPurchase = totalPurchaseResult[0]?.total || 0;
 
-    return totalCash - totalPurchase;
+    // Sum all applicationFee from Work model for "Handcash to Gpay Transfer" ONLY
+    const totalTransferResult = await Work.aggregate([
+        {
+            $match: {
+                'items.title': { $regex: /Handcash to Gpay Transfer/i },
+                paymentStatus: 'Paid'
+            }
+        },
+        { $group: { _id: null, total: { $sum: '$applicationFee' } } }
+    ]);
+    const totalTransfer = totalTransferResult[0]?.total || 0;
+
+    return totalCash - totalPurchase - totalTransfer;
 };
 
 // @desc    Get all purchases with date filter

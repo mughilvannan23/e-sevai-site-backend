@@ -1,6 +1,7 @@
 const Work = require('../models/Work');
 const User = require('../models/User');
 const WorkItem = require('../models/WorkItem');
+const purchaseController = require('./purchaseController');
 
 const parseLocalDate = (dateStr) => {
   if (!dateStr) return null;
@@ -98,6 +99,18 @@ const createWork = async (req, res) => {
     let workDate = date ? new Date(date) : currentTime;
     if (isNaN(workDate.getTime())) {
       workDate = currentTime;
+    }
+
+    // Validation for Handcash to Gpay Transfer balance
+    const transferItem = processedItems.find(i => i.title.toLowerCase().includes('handcash to gpay transfer'));
+    if (transferItem && paymentStatus === 'Paid') {
+      const currentBalance = await purchaseController.getShopBalanceInternal();
+      if (Number(applicationFee) > currentBalance) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient Shop Balance. Available: ₹${currentBalance.toLocaleString()}`
+        });
+      }
     }
 
     // Create work entry (using 'employee' field as per model)
@@ -323,6 +336,16 @@ const updateWork = async (req, res) => {
     if (notes !== undefined) work.notes = notes;
     if (applicationFee !== undefined) work.applicationFee = Number(applicationFee) || 0;
 
+    // Validation for Handcash to Gpay Transfer balance if status is changing to Paid or amount is changing
+    const isPaidNow = paymentStatus === 'Paid';
+    const isTransfer = items && items.some(i => {
+      if (i.workItemId) {
+        // We'll check this after processedItems is built
+        return false;
+      }
+      return i.workTitle && i.workTitle.toLowerCase().includes('handcash to gpay transfer');
+    });
+
     if (items && Array.isArray(items)) {
       let totalWorkCharge = 0;
       let totalServiceCharge = 0;
@@ -367,6 +390,27 @@ const updateWork = async (req, res) => {
       work.adminPrice = totalWorkCharge + totalServiceCharge;
       work.totalDiscount = totalDiscount;
       work.otherCharges = totalOtherCharges;
+    }
+
+    // Secondary check for transfer in processed items
+    const transferItem = work.items.find(i => i.title.toLowerCase().includes('handcash to gpay transfer'));
+    if (transferItem && work.paymentStatus === 'Paid') {
+      const currentBalance = await purchaseController.getShopBalanceInternal();
+      // We must account for the current entry if it was already Paid (don't double count)
+      // But getShopBalanceInternal already includes all PAID entries.
+      // If we are UPDATING an existing Paid entry, we should add back its previous fee before checking.
+      let balanceToCheck = currentBalance;
+      const oldWork = await Work.findById(req.params.id);
+      if (oldWork && oldWork.paymentStatus === 'Paid' && oldWork.items.some(i => i.title.toLowerCase().includes('handcash to gpay transfer'))) {
+         balanceToCheck += oldWork.applicationFee;
+      }
+
+      if (work.applicationFee > balanceToCheck) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient Shop Balance. Available: ₹${balanceToCheck.toLocaleString()}`
+        });
+      }
     }
 
     await work.save();
@@ -496,13 +540,10 @@ const getActiveWorkItems = async (req, res) => {
 // Get total shop balance (cash only)
 const getShopBalance = async (req, res) => {
   try {
-    // Only calculate from Paid entries
-    const works = await Work.find({ paymentStatus: 'Paid' });
-    const totalCash = works.reduce((sum, w) => sum + (w.cashAmount || 0), 0);
-
+    const shopBalance = await purchaseController.getShopBalanceInternal();
     res.json({
       success: true,
-      shopBalance: totalCash
+      shopBalance
     });
   } catch (error) {
     console.error('SHOP BALANCE ERROR:', error);
