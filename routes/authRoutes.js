@@ -2,8 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const {
-  adminLogin,
-  employeeLogin,
+  login,
   getProfile,
   logout
 } = require('../controllers/authController');
@@ -42,8 +41,7 @@ const changePasswordValidation = [
 ];
 
 // Routes
-router.post('/admin/login', loginValidation, validateRequest, adminLogin);
-router.post('/employee/login', loginValidation, validateRequest, employeeLogin);
+router.post('/login', loginValidation, validateRequest, login);
 router.get('/profile', authenticate, getProfile);
 router.put('/change-password', authenticate, changePasswordValidation, validateRequest, () => { });
 router.post('/logout', authenticate, logout);

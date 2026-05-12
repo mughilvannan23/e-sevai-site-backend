@@ -3,148 +3,72 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 /**
- * ✅ ADMIN LOGIN
+ * ✅ SMART LOGIN (AUTO ROLE DETECTION)
  */
-const adminLogin = async (req, res) => {
+const login = async (req, res) => {
   try {
     const { mobile, password } = req.body;
 
-    console.log('Admin login attempt with mobile:', mobile);
-
     if (!mobile || !password) {
-      return res.status(401).json({
+      return res.status(400).json({
         success: false,
-        message: 'Invalid credentials'
+        message: 'Mobile and password are required'
       });
     }
 
-    // 🔍 First, try to find admin in database
-    let adminUser = await User.findOne({
-      mobile: mobile.trim(),
-      role: 'admin',
+    const trimmedMobile = mobile.trim();
+
+    // 🔍 1. Find user by mobile number in DB (regardless of role)
+    let user = await User.findOne({
+      mobile: trimmedMobile,
       isActive: true
     }).select('+password');
 
-    console.log('Admin user found in DB:', !!adminUser);
-
-    if (adminUser) {
-      // ✅ Admin exists in database - verify password against stored hash
-      const isPasswordValid = await bcrypt.compare(password, adminUser.password);
+    if (user) {
+      // ✅ User exists in database - verify password
+      const isPasswordValid = await user.comparePassword(password);
 
       if (!isPasswordValid) {
-        console.log('Invalid password for database admin');
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
         });
       }
     } else {
-      // 🔄 No admin in database - fallback to .env credentials for first-time setup
+      // 🔄 2. Fallback to .env credentials for Admin if user not in DB
       const configuredAdminMobile = process.env.ADMIN_MOBILE?.trim();
       const configuredAdminPassword = process.env.ADMIN_PASSWORD?.trim();
 
-      console.log('Checking .env credentials:');
-      console.log('  Input mobile:', mobile);
-      console.log('  Expected mobile:', configuredAdminMobile);
-      console.log('  Mobile match:', mobile === configuredAdminMobile);
-      console.log('  Password match:', password === configuredAdminPassword);
+      if (trimmedMobile === configuredAdminMobile && password === configuredAdminPassword) {
+        console.log('⚙️ Creating admin user from .env credentials...');
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(configuredAdminPassword, salt);
 
-      if (mobile !== configuredAdminMobile || password !== configuredAdminPassword) {
-        console.log('Invalid admin credentials provided');
+        user = new User({
+          name: 'System Administrator',
+          mobile: configuredAdminMobile,
+          password: hashedPassword,
+          role: 'admin',
+          isActive: true
+        });
+        await user.save();
+      } else {
+        // No user found and not the .env admin
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
         });
       }
-
-      console.log('⚙️ Creating admin user in database...');
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(configuredAdminPassword, salt);
-
-      adminUser = new User({
-        name: 'System Administrator',
-        mobile: configuredAdminMobile,
-        password: hashedPassword,
-        role: 'admin',
-        isActive: true
-      });
-      await adminUser.save();
     }
 
     // Update last login timestamp
-    adminUser.lastLogin = new Date();
-    await adminUser.save();
-
-    // Generate JWT Token
-    const token = adminUser.generateAuthToken();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      token,
-      user: {
-        id: adminUser._id,
-        name: adminUser.name,
-        mobile: adminUser.mobile,
-        role: adminUser.role
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Admin login error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error during login'
-    });
-  }
-};
-
-/**
- * ✅ EMPLOYEE LOGIN
- */
-const employeeLogin = async (req, res) => {
-  try {
-    const { mobile, password } = req.body;
-
-    if (!mobile || !password) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Find active employee
-    const user = await User.findOne({
-      mobile: mobile.trim(),
-      role: 'employee',
-      isActive: true
-    }).select('+password');
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Verify password
-    const isPasswordValid = await user.comparePassword(password);
-
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Update last login
     user.lastLogin = new Date();
     await user.save();
 
     // Generate JWT Token
     const token = user.generateAuthToken();
 
-    console.log(`✅ Employee login: ${user.mobile}`);
+    console.log(`✅ ${user.role.toUpperCase()} Login: ${user.mobile}`);
 
     return res.status(200).json({
       success: true,
@@ -161,13 +85,14 @@ const employeeLogin = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Employee login error:', error);
+    console.error('❌ Login error:', error);
     return res.status(500).json({
       success: false,
       message: 'Server error during login'
     });
   }
 };
+
 
 /**
  * ✅ GET CURRENT USER PROFILE
@@ -212,8 +137,7 @@ const logout = async (req, res) => {
 };
 
 module.exports = {
-  adminLogin,
-  employeeLogin,
+  login,
   getProfile,
   logout
 };
