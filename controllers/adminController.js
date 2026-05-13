@@ -172,7 +172,7 @@ const getDashboardStats = async (req, res) => {
             }
         ]);
         const totalNetProfit = totalProfitAgg[0]?.totalProfit || 0;
-        const shopBalance = await purchaseController.getShopBalanceInternal();
+        const shopBalances = await purchaseController.calculateBalance();
 
         res.json({
             success: true,
@@ -193,7 +193,8 @@ const getDashboardStats = async (req, res) => {
                     total: totalRevenueAgg[0]?.total || 0,
                     pending: pendingPaymentsCount,
                     profit: totalNetProfit,
-                    shopBalance: shopBalance
+                    shopBalance: shopBalances.handCashBalance,
+                    gpayBalance: shopBalances.gpayBalance
                 }
             }
         });
@@ -338,7 +339,7 @@ const getRevenueReport = async (req, res) => {
             {
                 $addFields: {
                     expectedRevenue: { $add: ['$entryWorkCharge', '$entryServiceCharge'] },
-                    netProfit: { 
+                    netProfit: {
                         $subtract: [
                             { $add: ['$entryServiceCharge', { $ifNull: ['$otherCharges', 0] }] },
                             { $ifNull: ['$totalDiscount', 0] }
@@ -452,7 +453,7 @@ const downloadRevenueExcel = async (req, res) => {
         }
         if (searchName) query.customerName = { $regex: searchName, $options: 'i' };
         if (searchPhone) query.customerPhone = { $regex: searchPhone, $options: 'i' };
-        
+
         let works = await Work.find(query).populate('employee', 'name employeeId').sort({ date: 1 });
 
         if (employeeName) {
@@ -483,11 +484,11 @@ const downloadRevenueExcel = async (req, res) => {
             const workTitles = work.items && work.items.length > 0
                 ? work.items.map(i => `${i.title} (x${i.quantity || 1})`).join(', ')
                 : work.workTitle || '-';
-            
+
             const dateObj = new Date(work.date);
             const formattedDate = dateObj.toLocaleDateString('en-IN');
             const formattedTime = dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-            
+
             const displayWorkStatus = work.workStatus === 'In Progress' ? 'Pending' : work.workStatus;
 
             const appNums = work.items && work.items.length > 0
@@ -566,21 +567,21 @@ const downloadRevenuePDF = async (req, res) => {
 
         const tableTop = margin => doc.y;
         let y = tableTop();
-        const itemX = { 
-            date: 30, 
-            time: 60, 
-            customer: 85, 
-            phone: 135, 
-            items: 175, 
+        const itemX = {
+            date: 30,
+            time: 60,
+            customer: 85,
+            phone: 135,
+            items: 175,
             appNum: 235,
             gpay: 285,
             cash: 315,
-            total: 345, 
+            total: 345,
             disc: 375,
-            pStatus: 405, 
-            wStatus: 435, 
-            method: 465, 
-            notes: 510 
+            pStatus: 405,
+            wStatus: 435,
+            method: 465,
+            notes: 510
         };
 
         // Header
@@ -634,7 +635,7 @@ const downloadRevenuePDF = async (req, res) => {
             const dateObj = new Date(work.date);
             const formattedDate = dateObj.toLocaleDateString('en-IN');
             const formattedTime = dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-            
+
             const displayWorkStatus = work.workStatus === 'In Progress' ? 'Pending' : work.workStatus;
 
             const workTitles = work.items && work.items.length > 0
@@ -690,7 +691,7 @@ const downloadRevenuePDF = async (req, res) => {
 // WorkItem CRUD Operations
 const createWorkItem = async (req, res) => {
     try {
-        const { name, workCharge, serviceCharge } = req.body;
+        const { name, workCharge, serviceCharge, chargeType } = req.body;
 
         if (!name || workCharge === undefined || serviceCharge === undefined) {
             return res.status(400).json({
@@ -712,7 +713,8 @@ const createWorkItem = async (req, res) => {
         const workItem = new WorkItem({
             name: name.trim(),
             workCharge: parsedWorkCharge,
-            serviceCharge: parsedServiceCharge
+            serviceCharge: parsedServiceCharge,
+            chargeType: chargeType || 'None'
         });
 
         await workItem.save();
@@ -758,11 +760,11 @@ const getAllWorkItems = async (req, res) => {
 
 const updateWorkItem = async (req, res) => {
     try {
-        const { name, workCharge, serviceCharge, status, isActive } = req.body;
+        const { name, workCharge, serviceCharge, chargeType, status, isActive } = req.body;
         const statusValue = status !== undefined ? status : isActive;
         const workItem = await WorkItem.findByIdAndUpdate(
             req.params.id,
-            { name, workCharge, serviceCharge, status: statusValue, isActive: statusValue },
+            { name, workCharge, serviceCharge, chargeType, status: statusValue, isActive: statusValue },
             { new: true }
         );
         if (!workItem) return res.status(404).json({ success: false, message: 'Work item not found' });
@@ -812,11 +814,11 @@ const updateProfile = async (req, res) => {
 
         if (mobile) {
             updateData.mobile = mobile.trim();
-            
+
             // Check if mobile is already taken
-            const existingUser = await User.findOne({ 
-                mobile: updateData.mobile, 
-                _id: { $ne: adminId } 
+            const existingUser = await User.findOne({
+                mobile: updateData.mobile,
+                _id: { $ne: adminId }
             });
             if (existingUser) {
                 return res.status(400).json({

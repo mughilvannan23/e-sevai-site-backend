@@ -17,6 +17,11 @@ const workItemSchema = new mongoose.Schema({
     required: [true, 'Service charge is required'],
     min: [0, 'Service charge must be positive']
   },
+  chargeType: {
+    type: String,
+    enum: ['None', 'GPay', 'Hand Cash', 'Recharge'],
+    default: 'None'
+  },
   status: {
     type: Boolean,
     default: true

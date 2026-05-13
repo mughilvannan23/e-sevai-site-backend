@@ -2,21 +2,22 @@ const Purchase = require('../models/Purchase');
 const Work = require('../models/Work');
 
 // Calculate current shop balance
-const calculateBalance = async () => {
-    // Sum all cashAmount from Work model
+exports.calculateBalance = async () => {
+    // 1. Hand Cash Balance Calculation
+    // Total Cash collected
     const totalCashResult = await Work.aggregate([
         { $match: { paymentStatus: 'Paid' } },
         { $group: { _id: null, total: { $sum: '$cashAmount' } } }
     ]);
     const totalCash = totalCashResult[0]?.total || 0;
 
-    // Sum all amount from Purchase model
+    // Total Purchases (Expenses)
     const totalPurchaseResult = await Purchase.aggregate([
         { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const totalPurchase = totalPurchaseResult[0]?.total || 0;
 
-    // Sum all applicationFee from Work model for "Handcash to Gpay Transfer" ONLY
+    // Total Transfers (Handcash to Gpay)
     const totalTransferResult = await Work.aggregate([
         {
             $match: {
@@ -28,7 +29,40 @@ const calculateBalance = async () => {
     ]);
     const totalTransfer = totalTransferResult[0]?.total || 0;
 
-    return totalCash - totalPurchase - totalTransfer;
+    // Preset Deductions from Hand Cash
+    const handCashDeductionsResult = await Work.aggregate([
+        { $match: { items: { $type: 'array' } } },
+        { $unwind: '$items' },
+        { $match: { 'items.presetChargeType': 'Hand Cash' } },
+        { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
+    ]);
+    const handCashDeductions = handCashDeductionsResult[0]?.total || 0;
+
+    const handCashBalance = totalCash - totalPurchase - totalTransfer - handCashDeductions;
+
+    // 2. GPay Balance Calculation
+    // Total GPay collected
+    const totalGPayResult = await Work.aggregate([
+        { $match: { paymentStatus: 'Paid' } },
+        { $group: { _id: null, total: { $sum: '$gpayAmount' } } }
+    ]);
+    const totalGPay = totalGPayResult[0]?.total || 0;
+
+    // Preset Deductions from GPay
+    const gpayDeductionsResult = await Work.aggregate([
+        { $match: { items: { $type: 'array' } } },
+        { $unwind: '$items' },
+        { $match: { 'items.presetChargeType': { $in: ['GPay', 'Recharge'] } } },
+        { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
+    ]);
+    const gpayDeductions = gpayDeductionsResult[0]?.total || 0;
+
+    const gpayBalance = totalGPay - gpayDeductions;
+
+    return {
+        handCashBalance,
+        gpayBalance
+    };
 };
 
 // @desc    Get all purchases with date filter
@@ -55,7 +89,7 @@ exports.getAllPurchases = async (req, res) => {
         }
 
         const purchases = await Purchase.find(query).sort({ date: -1 });
-        const shopBalance = await calculateBalance();
+        const shopBalance = await exports.calculateBalance();
 
         res.json({
             success: true,
@@ -85,7 +119,8 @@ exports.createPurchase = async (req, res) => {
             });
         }
 
-        const currentBalance = await calculateBalance();
+        const shopBalance = await exports.calculateBalance();
+        const currentBalance = shopBalance.handCashBalance;
 
         if (amount > currentBalance) {
             return res.status(400).json({
@@ -116,5 +151,82 @@ exports.createPurchase = async (req, res) => {
     }
 };
 
+// @desc    Update a purchase
+// @route   PUT /api/purchases/:id
+// @access  Private/Admin
+exports.updatePurchase = async (req, res) => {
+    try {
+        const { orderName, amount, date } = req.body;
+        const purchase = await Purchase.findById(req.params.id);
+
+        if (!purchase) {
+            return res.status(404).json({
+                success: false,
+                message: 'Purchase not found'
+            });
+        }
+
+        // Check balance if amount is increased
+        if (amount && amount > purchase.amount) {
+            const shopBalance = await exports.calculateBalance();
+            const currentBalance = shopBalance.handCashBalance + purchase.amount; // Add back current purchase amount to check total available
+
+            if (amount > currentBalance) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Insufficient balance'
+                });
+            }
+        }
+
+        if (orderName) purchase.orderName = orderName;
+        if (amount !== undefined) purchase.amount = amount;
+        if (date) purchase.date = date;
+
+        await purchase.save();
+
+        res.json({
+            success: true,
+            message: 'Purchase updated successfully',
+            purchase
+        });
+    } catch (error) {
+        console.error('Update purchase error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while updating purchase'
+        });
+    }
+};
+
+// @desc    Delete a purchase
+// @route   DELETE /api/purchases/:id
+// @access  Private/Admin
+exports.deletePurchase = async (req, res) => {
+    try {
+        const purchase = await Purchase.findById(req.params.id);
+
+        if (!purchase) {
+            return res.status(404).json({
+                success: false,
+                message: 'Purchase not found'
+            });
+        }
+
+        await Purchase.findByIdAndDelete(req.params.id);
+
+        res.json({
+            success: true,
+            message: 'Purchase deleted successfully'
+        });
+    } catch (error) {
+        console.error('Delete purchase error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while deleting purchase'
+        });
+    }
+};
+
 // Helper for other controllers
-exports.getShopBalanceInternal = calculateBalance;
+exports.getShopBalanceInternal = exports.calculateBalance;

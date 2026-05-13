@@ -4,6 +4,7 @@ const { body, validationResult } = require('express-validator');
 const {
   createWork,
   getMyWorks,
+  getAllEmployeeWorks,
   getWorkById,
   updateWork,
   deleteWork,
@@ -100,6 +101,7 @@ const updateWorkValidation = [
 // Routes
 router.post('/', authenticate, workValidation, validateRequest, createWork);
 router.get('/', authenticate, getMyWorks);
+router.get('/all-works', authenticate, getAllEmployeeWorks);
 router.get('/stats', authenticate, getMyWorkStats);
 router.get('/items/active', authenticate, getActiveWorkItems);
 router.get('/employee/shop-balance', authenticate, authorizeEmployee, getShopBalance);

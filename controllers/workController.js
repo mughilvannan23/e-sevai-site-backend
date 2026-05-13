@@ -78,6 +78,8 @@ const createWork = async (req, res) => {
               quantity: qty,
               otherCharges: itemOtherC,
               discount: itemDiscount,
+              presetAmount: parseFloat(item.presetAmount) || 0,
+              presetChargeType: item.presetChargeType || 'None',
               applicationNumber: item.applicationNumber
             });
           }
@@ -89,6 +91,8 @@ const createWork = async (req, res) => {
             quantity: qty,
             otherCharges: itemOtherC,
             discount: itemDiscount,
+            presetAmount: parseFloat(item.presetAmount) || 0,
+            presetChargeType: item.presetChargeType || 'None',
             applicationNumber: item.applicationNumber
           });
         }
@@ -148,6 +152,65 @@ const createWork = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while creating work entry.'
+    });
+  }
+};
+
+// Get all works for all employees (View only for employees)
+const getAllEmployeeWorks = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, startDate, endDate, employeeId, paymentStatus, workStatus, search } = req.query;
+
+    const query = {};
+
+    if (startDate && endDate) {
+      const start = parseLocalDate(startDate);
+      const end = parseLocalDate(endDate);
+      end.setHours(23, 59, 59, 999);
+      query.date = { $gte: start, $lte: end };
+    }
+
+    if (employeeId) query.employee = employeeId;
+    if (paymentStatus) query.paymentStatus = paymentStatus;
+    if (workStatus) {
+      if (workStatus === 'Pending') {
+        query.workStatus = { $in: ['Pending', 'In Progress'] };
+      } else {
+        query.workStatus = workStatus;
+      }
+    }
+
+    if (search) {
+      query.$or = [
+        { customerName: { $regex: search, $options: 'i' } },
+        { 'items.title': { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const works = await Work.find(query)
+      .populate('employee', 'name mobile employeeId')
+      .sort({ date: -1, createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Work.countDocuments(query);
+
+    res.json({
+      success: true,
+      works,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalWorks: total,
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1
+      }
+    });
+  } catch (error) {
+    console.error('Get all employee works error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching all employee work entries.'
     });
   }
 };
@@ -371,6 +434,8 @@ const updateWork = async (req, res) => {
               quantity: qty,
               otherCharges: itemOtherC,
               discount: itemDiscount,
+              presetAmount: parseFloat(item.presetAmount) || 0,
+              presetChargeType: item.presetChargeType || 'None',
               applicationNumber: item.applicationNumber
             });
           }
@@ -382,6 +447,8 @@ const updateWork = async (req, res) => {
             quantity: qty,
             otherCharges: itemOtherC,
             discount: itemDiscount,
+            presetAmount: parseFloat(item.presetAmount) || 0,
+            presetChargeType: item.presetChargeType || 'None',
             applicationNumber: item.applicationNumber
           });
         }
@@ -540,10 +607,11 @@ const getActiveWorkItems = async (req, res) => {
 // Get total shop balance (cash only)
 const getShopBalance = async (req, res) => {
   try {
-    const shopBalance = await purchaseController.getShopBalanceInternal();
+    const balances = await purchaseController.calculateBalance();
     res.json({
       success: true,
-      shopBalance
+      shopBalance: balances.handCashBalance,
+      gpayBalance: balances.gpayBalance
     });
   } catch (error) {
     console.error('SHOP BALANCE ERROR:', error);
@@ -557,6 +625,7 @@ const getShopBalance = async (req, res) => {
 module.exports = {
   createWork,
   getMyWorks,
+  getAllEmployeeWorks,
   getWorkById,
   updateWork,
   deleteWork,

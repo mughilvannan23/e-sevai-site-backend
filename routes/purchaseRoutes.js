@@ -11,4 +11,8 @@ router.route('/')
     .get(purchaseController.getAllPurchases)
     .post(purchaseController.createPurchase);
 
+router.route('/:id')
+    .put(purchaseController.updatePurchase)
+    .delete(purchaseController.deletePurchase);
+
 module.exports = router;
