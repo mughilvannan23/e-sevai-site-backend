@@ -4,8 +4,11 @@ const workItemSchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, 'Work name is required'],
-    trim: true,
-    unique: true
+    trim: true
+  },
+  adminId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   },
   workCharge: {
     type: Number,

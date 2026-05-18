@@ -29,8 +29,17 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'employee'],
+    enum: ['superadmin', 'admin', 'employee'],
     default: 'employee'
+  },
+  adminId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  shopName: {
+    type: String,
+    trim: true
   },
   employeeId: {
   type: String,
@@ -100,7 +109,7 @@ userSchema.methods.generateAuthToken = function() {
       employeeId: this.employeeId 
     },
     process.env.JWT_SECRET,
-    { expiresIn: '24h' }
+    { expiresIn: '30m' }
   );
   return token;
 };

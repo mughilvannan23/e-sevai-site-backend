@@ -11,6 +11,7 @@ const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const workRoutes = require('./routes/workRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const superadminRoutes = require('./routes/superadminRoutes');
 const purchaseRoutes = require('./routes/purchaseRoutes');
 
 const app = express();
@@ -83,7 +84,56 @@ mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
-.then(() => console.log('MongoDB connected successfully'))
+.then(async () => {
+  console.log('MongoDB connected successfully');
+  // Auto-migrate old data to the default admin
+  try {
+    const User = require('./models/User');
+    const Work = require('./models/Work');
+    const WorkItem = require('./models/WorkItem');
+    const Purchase = require('./models/Purchase');
+
+    const defaultAdmin = await User.findOne({ role: 'admin' }).sort({ createdAt: 1 });
+    if (defaultAdmin) {
+      const adminId = defaultAdmin._id;
+      // Assign all employees without adminId
+      await User.updateMany({ role: 'employee', adminId: { $exists: false } }, { $set: { adminId } });
+      await User.updateMany({ role: 'employee', adminId: null }, { $set: { adminId } });
+      // Assign works
+      await Work.updateMany({ adminId: { $exists: false } }, { $set: { adminId } });
+      await Work.updateMany({ adminId: null }, { $set: { adminId } });
+      // Assign work items
+      await WorkItem.updateMany({ adminId: { $exists: false } }, { $set: { adminId } });
+      await WorkItem.updateMany({ adminId: null }, { $set: { adminId } });
+      // Assign purchases
+      await Purchase.updateMany({ adminId: { $exists: false } }, { $set: { adminId } });
+      await Purchase.updateMany({ adminId: null }, { $set: { adminId } });
+      console.log('✅ Auto-migration for multi-tenant shops completed.');
+    }
+
+    // Drop the old email unique index if it exists since email is no longer unique/required
+    try {
+      await mongoose.connection.collection('users').dropIndex('email_1');
+      console.log('✅ Dropped deprecated email_1 index.');
+    } catch (e) {
+      if (e.codeName !== 'IndexNotFound') {
+         console.warn('⚠️ Could not drop email_1 index:', e.message);
+      }
+    }
+
+    try {
+      await mongoose.connection.collection('users').dropIndex('employeeId_1');
+      console.log('✅ Dropped employeeId_1 index (to allow recreation as sparse).');
+    } catch (e) {
+      if (e.codeName !== 'IndexNotFound') {
+         console.warn('⚠️ Could not drop employeeId_1 index:', e.message);
+      }
+    }
+
+  } catch (error) {
+    console.error('Data migration error:', error);
+  }
+})
 .catch(err => {
   console.error('MongoDB connection error:', err);
   process.exit(1);
@@ -94,6 +144,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/works', workRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/superadmin', superadminRoutes);
 app.use('/api/purchases', purchaseRoutes);
 
 // Health check endpoint

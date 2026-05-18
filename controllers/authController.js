@@ -22,7 +22,7 @@ const login = async (req, res) => {
     let user = await User.findOne({
       mobile: trimmedMobile,
       isActive: true
-    }).select('+password');
+    }).select('+password').populate('adminId', 'shopName');
 
     if (user) {
       // ✅ User exists in database - verify password
@@ -38,9 +38,13 @@ const login = async (req, res) => {
       // 🔄 2. Fallback to .env credentials for Admin if user not in DB
       const configuredAdminMobile = process.env.ADMIN_MOBILE?.trim();
       const configuredAdminPassword = process.env.ADMIN_PASSWORD?.trim();
+      
+      // 🔄 3. Fallback to .env credentials for SuperAdmin
+      const configuredSuperadminMobile = process.env.SUPERADMIN_MOBILE?.trim() || '9999999999';
+      const configuredSuperadminPassword = process.env.SUPERADMIN_PASSWORD?.trim() || 'superadmin@123';
 
       if (trimmedMobile === configuredAdminMobile && password === configuredAdminPassword) {
-        console.log('⚙️ Creating admin user from .env credentials...');
+        console.log('⚙️ Creating default admin user from .env credentials...');
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(configuredAdminPassword, salt);
 
@@ -49,11 +53,25 @@ const login = async (req, res) => {
           mobile: configuredAdminMobile,
           password: hashedPassword,
           role: 'admin',
+          shopName: 'Default Shop',
+          isActive: true
+        });
+        await user.save();
+      } else if (trimmedMobile === configuredSuperadminMobile && password === configuredSuperadminPassword) {
+        console.log('⚙️ Creating superadmin user from .env credentials...');
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(configuredSuperadminPassword, salt);
+
+        user = new User({
+          name: 'Super Admin',
+          mobile: configuredSuperadminMobile,
+          password: hashedPassword,
+          role: 'superadmin',
           isActive: true
         });
         await user.save();
       } else {
-        // No user found and not the .env admin
+        // No user found and not the .env admin or superadmin
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
@@ -80,7 +98,8 @@ const login = async (req, res) => {
         mobile: user.mobile,
         role: user.role,
         employeeId: user.employeeId,
-        lastLogin: user.lastLogin
+        lastLogin: user.lastLogin,
+        shopName: user.role === 'employee' && user.adminId ? user.adminId.shopName : user.shopName
       }
     });
 
@@ -107,7 +126,8 @@ const getProfile = async (req, res) => {
         mobile: req.user.mobile,
         role: req.user.role,
         employeeId: req.user.employeeId,
-        lastLogin: req.user.lastLogin
+        lastLogin: req.user.lastLogin,
+        shopName: req.user.role === 'employee' && req.user.adminId ? req.user.adminId.shopName : req.user.shopName
       }
     });
   } catch (error) {

@@ -50,11 +50,11 @@ const createWork = async (req, res) => {
       }
     }
 
-    // Process items for charge calculations
     let totalWorkCharge = 0;
     let totalServiceCharge = 0;
     let totalOtherCharges = 0;
     let totalDiscount = 0;
+    let calculatedAppFee = 0;
     const processedItems = [];
 
     if (items && Array.isArray(items)) {
@@ -62,8 +62,10 @@ const createWork = async (req, res) => {
         const qty = parseInt(item.quantity) || 1;
         const itemOtherC = parseFloat(item.otherCharges) || 0;
         const itemDiscount = parseFloat(item.discount) || 0;
+        const itemPresetAmt = parseFloat(item.presetAmount) || 0;
         totalOtherCharges += itemOtherC;
         totalDiscount += itemDiscount;
+        calculatedAppFee += itemPresetAmt;
         
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
@@ -109,7 +111,7 @@ const createWork = async (req, res) => {
     const transferItem = processedItems.find(i => i.title.toLowerCase().includes('handcash to gpay transfer'));
     if (transferItem && paymentStatus === 'Paid') {
       const currentBalance = await purchaseController.getShopBalanceInternal();
-      if (Number(applicationFee) > currentBalance) {
+      if (calculatedAppFee > currentBalance) {
         return res.status(400).json({
           success: false,
           message: `Insufficient Shop Balance. Available: ₹${currentBalance.toLocaleString()}`
@@ -120,6 +122,7 @@ const createWork = async (req, res) => {
     // Create work entry (using 'employee' field as per model)
     const work = await Work.create({
       employee: req.user.id,
+      adminId: req.user.role === 'admin' ? req.user._id : req.user.adminId,
       date: workDate,
       customerName,
       customerPhone,
@@ -135,7 +138,7 @@ const createWork = async (req, res) => {
       paymentStatus: paymentStatus || 'Pending',
       workStatus: workStatus || 'In Progress',
       notes,
-      applicationFee: Number(applicationFee) || 0
+      applicationFee: calculatedAppFee
     });
 
     // Populate employee details
@@ -161,7 +164,9 @@ const getAllEmployeeWorks = async (req, res) => {
   try {
     const { page = 1, limit = 10, startDate, endDate, employeeId, paymentStatus, workStatus, search } = req.query;
 
-    const query = {};
+    const query = {
+      adminId: req.user.role === 'admin' ? req.user._id : req.user.adminId
+    };
 
     if (startDate && endDate) {
       const start = parseLocalDate(startDate);
@@ -302,6 +307,16 @@ const getWorkById = async (req, res) => {
     }
 
     // Check if user can access this work
+    const workAdminId = work.adminId?.toString();
+    const userAdminId = (req.user.role === 'admin' ? req.user._id : req.user.adminId)?.toString();
+
+    if (workAdminId && workAdminId !== userAdminId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.'
+      });
+    }
+
     if (req.user.role === 'employee' && work.employee._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -351,6 +366,16 @@ const updateWork = async (req, res) => {
     }
 
     // Check if user can update this work
+    const workAdminId = work.adminId?.toString();
+    const userAdminId = (req.user.role === 'admin' ? req.user._id : req.user.adminId)?.toString();
+
+    if (workAdminId && workAdminId !== userAdminId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.'
+      });
+    }
+
     if (req.user.role === 'employee' && work.employee.toString() !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -399,28 +424,24 @@ const updateWork = async (req, res) => {
     if (notes !== undefined) work.notes = notes;
     if (applicationFee !== undefined) work.applicationFee = Number(applicationFee) || 0;
 
-    // Validation for Handcash to Gpay Transfer balance if status is changing to Paid or amount is changing
-    const isPaidNow = paymentStatus === 'Paid';
-    const isTransfer = items && items.some(i => {
-      if (i.workItemId) {
-        // We'll check this after processedItems is built
-        return false;
-      }
-      return i.workTitle && i.workTitle.toLowerCase().includes('handcash to gpay transfer');
-    });
+    // Secondary check for transfer in processed items
+    let calculatedAppFee = work.applicationFee;
 
     if (items && Array.isArray(items)) {
       let totalWorkCharge = 0;
       let totalServiceCharge = 0;
       let totalOtherCharges = 0;
       let totalDiscount = 0;
+      calculatedAppFee = 0;
       const processedItems = [];
       for (const item of items) {
         const qty = parseInt(item.quantity) || 1;
         const itemOtherC = parseFloat(item.otherCharges) || 0;
         const itemDiscount = parseFloat(item.discount) || 0;
+        const itemPresetAmt = parseFloat(item.presetAmount) || 0;
         totalOtherCharges += itemOtherC;
         totalDiscount += itemDiscount;
+        calculatedAppFee += itemPresetAmt;
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
@@ -457,6 +478,7 @@ const updateWork = async (req, res) => {
       work.adminPrice = totalWorkCharge + totalServiceCharge;
       work.totalDiscount = totalDiscount;
       work.otherCharges = totalOtherCharges;
+      work.applicationFee = calculatedAppFee;
     }
 
     // Secondary check for transfer in processed items
@@ -472,7 +494,7 @@ const updateWork = async (req, res) => {
          balanceToCheck += oldWork.applicationFee;
       }
 
-      if (work.applicationFee > balanceToCheck) {
+      if (calculatedAppFee > balanceToCheck) {
         return res.status(400).json({
           success: false,
           message: `Insufficient Shop Balance. Available: ₹${balanceToCheck.toLocaleString()}`
@@ -513,6 +535,16 @@ const deleteWork = async (req, res) => {
     }
 
     // Check if user can delete this work
+    const workAdminId = work.adminId?.toString();
+    const userAdminId = (req.user.role === 'admin' ? req.user._id : req.user.adminId)?.toString();
+
+    if (workAdminId && workAdminId !== userAdminId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.'
+      });
+    }
+
     if (req.user.role === 'employee' && work.employee.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -590,7 +622,8 @@ const getMyWorkStats = async (req, res) => {
 // Get active work items for dropdown
 const getActiveWorkItems = async (req, res) => {
   try {
-    const workItems = await WorkItem.find({ $or: [{ status: true }, { isActive: true }] }).sort({ name: 1 });
+    const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+    const workItems = await WorkItem.find({ adminId, $or: [{ status: true }, { isActive: true }] }).sort({ name: 1 });
     res.json({
       success: true,
       workItems
@@ -607,7 +640,8 @@ const getActiveWorkItems = async (req, res) => {
 // Get total shop balance (cash only)
 const getShopBalance = async (req, res) => {
   try {
-    const balances = await purchaseController.calculateBalance();
+    const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+    const balances = await purchaseController.calculateBalance(adminId);
     res.json({
       success: true,
       shopBalance: balances.handCashBalance,

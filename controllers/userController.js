@@ -21,7 +21,8 @@ const createEmployee = async (req, res) => {
       mobile: mobile.trim(),
       email: email ? email.toLowerCase() : null,
       password,
-      role: 'employee'
+      role: 'employee',
+      adminId: req.user._id
     });
 
     await user.save();
@@ -55,7 +56,7 @@ const getEmployees = async (req, res) => {
     const { page = 1, limit = 10, search, status } = req.query;
     
     // Build query
-    const query = { role: 'employee' };
+    const query = { role: 'employee', adminId: req.user._id };
     
     if (search) {
       query.$or = [
@@ -104,7 +105,7 @@ const getEmployeeById = async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
     
-    if (!user || user.role !== 'employee') {
+    if (!user || user.role !== 'employee' || user.adminId?.toString() !== req.user._id.toString()) {
       return res.status(404).json({
         success: false,
         message: 'Employee not found.'
@@ -133,7 +134,7 @@ const updateEmployee = async (req, res) => {
     
     const user = await User.findById(req.params.id);
     
-    if (!user || user.role !== 'employee') {
+    if (!user || user.role !== 'employee' || user.adminId?.toString() !== req.user._id.toString()) {
       return res.status(404).json({
         success: false,
         message: 'Employee not found.'
@@ -200,7 +201,7 @@ const deleteEmployee = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     
-    if (!user || user.role !== 'employee') {
+    if (!user || user.role !== 'employee' || user.adminId?.toString() !== req.user._id.toString()) {
       return res.status(404).json({
         success: false,
         message: 'Employee not found.'
@@ -228,10 +229,11 @@ const deleteEmployee = async (req, res) => {
 // Get employee statistics
 const getEmployeeStats = async (req, res) => {
   try {
-    const totalEmployees = await User.countDocuments({ role: 'employee', isActive: true });
+    const totalEmployees = await User.countDocuments({ role: 'employee', isActive: true, adminId: req.user._id });
     const activeEmployees = await User.countDocuments({ 
       role: 'employee', 
       isActive: true,
+      adminId: req.user._id,
       lastLogin: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } // Last 30 days
     });
     const inactiveEmployees = totalEmployees - activeEmployees;

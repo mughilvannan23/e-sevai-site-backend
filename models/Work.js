@@ -6,6 +6,10 @@ const workSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  adminId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   date: {
     type: Date,
     required: true,

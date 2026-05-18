@@ -14,7 +14,7 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password');
+    const user = await User.findById(decoded.id).select('-password').populate('adminId', 'shopName');
     
     if (!user || !user.isActive) {
       return res.status(401).json({ 
@@ -33,9 +33,20 @@ const authenticate = async (req, res, next) => {
   }
 };
 
+// Authorize superadmin role
+const authorizeSuperAdmin = (req, res, next) => {
+  if (req.user.role !== 'superadmin') {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Access denied. Superadmin privileges required.' 
+    });
+  }
+  next();
+};
+
 // Authorize admin role
 const authorizeAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
+  if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
     return res.status(403).json({ 
       success: false, 
       message: 'Access denied. Admin privileges required.' 
@@ -75,6 +86,7 @@ const canAccessResource = (req, res, next) => {
 
 module.exports = {
   authenticate,
+  authorizeSuperAdmin,
   authorizeAdmin,
   authorizeEmployee,
   canAccessResource

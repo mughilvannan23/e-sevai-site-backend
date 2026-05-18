@@ -27,7 +27,9 @@ const getAllWorks = async (req, res) => {
         } = req.query;
 
         // Build query
-        const query = {};
+        const query = {
+            adminId: req.user.role === 'admin' ? req.user._id : req.user.adminId
+        };
 
         // Date range filter
         if (startDate && endDate) {
@@ -110,40 +112,44 @@ const getDashboardStats = async (req, res) => {
 
         const thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        
         // Get employee statistics
-        const totalEmployees = await User.countDocuments({ role: 'employee', isActive: true });
+        const totalEmployees = await User.countDocuments({ role: 'employee', isActive: true, adminId });
 
         // Get work statistics
         const todayWorks = await Work.find({
+            adminId,
             date: { $gte: today, $lt: tomorrow }
         });
 
         const monthWorks = await Work.find({
+            adminId,
             date: { $gte: thisMonth }
         });
 
-        const totalWorks = await Work.countDocuments({});
+        const totalWorks = await Work.countDocuments({ adminId });
 
         const totalRevenueAgg = await Work.aggregate([
-            { $match: { paymentStatus: 'Paid' } },
+            { $match: { adminId, paymentStatus: 'Paid' } },
             { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
         ]);
 
         const monthRevenueAgg = await Work.aggregate([
-            { $match: { date: { $gte: thisMonth }, paymentStatus: 'Paid' } },
+            { $match: { adminId, date: { $gte: thisMonth }, paymentStatus: 'Paid' } },
             { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
         ]);
 
         const todayRevenueAgg = await Work.aggregate([
-            { $match: { date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } },
+            { $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } },
             { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
         ]);
 
-        const pendingPaymentsCount = await Work.countDocuments({ paymentStatus: 'Pending' });
+        const pendingPaymentsCount = await Work.countDocuments({ adminId, paymentStatus: 'Pending' });
 
-        const pendingWorks = await Work.countDocuments({ workStatus: { $in: ['Pending', 'In Progress'] } });
+        const pendingWorks = await Work.countDocuments({ adminId, workStatus: { $in: ['Pending', 'In Progress'] } });
 
-        const completedWorks = await Work.countDocuments({ workStatus: 'Completed' });
+        const completedWorks = await Work.countDocuments({ adminId, workStatus: 'Completed' });
 
         const totalProfitAgg = await Work.aggregate([
             {
@@ -162,7 +168,7 @@ const getDashboardStats = async (req, res) => {
                 }
             },
             {
-                $match: { paymentStatus: 'Paid' }
+                $match: { adminId, paymentStatus: 'Paid' }
             },
             {
                 $group: {
@@ -172,7 +178,7 @@ const getDashboardStats = async (req, res) => {
             }
         ]);
         const totalNetProfit = totalProfitAgg[0]?.totalProfit || 0;
-        const shopBalances = await purchaseController.calculateBalance();
+        const shopBalances = await purchaseController.calculateBalance(adminId);
 
         res.json({
             success: true,
@@ -219,8 +225,9 @@ const getEmployeePerformance = async (req, res) => {
         const end = endDate ? parseLocalDate(endDate) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
         end.setHours(23, 59, 59, 999);
 
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         // Get all active employees
-        const employees = await User.find({ role: 'employee', isActive: true }).select('-password');
+        const employees = await User.find({ role: 'employee', isActive: true, adminId }).select('-password');
 
         // Get performance data for each employee
         const performanceData = await Promise.all(
@@ -306,10 +313,13 @@ const getRevenueReport = async (req, res) => {
             };
         }
 
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+
         // Get revenue data grouped by period
         const revenueData = await Work.aggregate([
             {
                 $match: {
+                    adminId,
                     date: { $gte: start, $lte: end }
                 }
             },
@@ -442,7 +452,8 @@ const downloadRevenueExcel = async (req, res) => {
         const end = endDate ? parseLocalDate(endDate) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
         end.setHours(23, 59, 59, 999);
 
-        const query = { date: { $gte: start, $lte: end } };
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        const query = { adminId, date: { $gte: start, $lte: end } };
         if (paymentStatus) query.paymentStatus = paymentStatus;
         if (workStatus) {
             if (workStatus === 'Pending') {
@@ -535,7 +546,8 @@ const downloadRevenuePDF = async (req, res) => {
         const end = endDate ? parseLocalDate(endDate) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
         end.setHours(23, 59, 59, 999);
 
-        const query = { date: { $gte: start, $lte: end } };
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        const query = { adminId, date: { $gte: start, $lte: end } };
         if (paymentStatus) query.paymentStatus = paymentStatus;
         if (workStatus) {
             if (workStatus === 'Pending') {
@@ -714,7 +726,8 @@ const createWorkItem = async (req, res) => {
             name: name.trim(),
             workCharge: parsedWorkCharge,
             serviceCharge: parsedServiceCharge,
-            chargeType: chargeType || 'None'
+            chargeType: chargeType || 'None',
+            adminId: req.user.role === 'admin' ? req.user._id : req.user.adminId
         });
 
         await workItem.save();
@@ -751,7 +764,8 @@ const createWorkItem = async (req, res) => {
 
 const getAllWorkItems = async (req, res) => {
     try {
-        const workItems = await WorkItem.find().sort({ createdAt: -1 });
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        const workItems = await WorkItem.find({ adminId }).sort({ createdAt: -1 });
         res.json({ success: true, workItems });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Server error while fetching work items' });
@@ -761,9 +775,9 @@ const getAllWorkItems = async (req, res) => {
 const updateWorkItem = async (req, res) => {
     try {
         const { name, workCharge, serviceCharge, chargeType, status, isActive } = req.body;
-        const statusValue = status !== undefined ? status : isActive;
-        const workItem = await WorkItem.findByIdAndUpdate(
-            req.params.id,
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        const workItem = await WorkItem.findOneAndUpdate(
+            { _id: req.params.id, adminId },
             { name, workCharge, serviceCharge, chargeType, status: statusValue, isActive: statusValue },
             { new: true }
         );
@@ -776,7 +790,8 @@ const updateWorkItem = async (req, res) => {
 
 const deleteWorkItem = async (req, res) => {
     try {
-        const workItem = await WorkItem.findByIdAndDelete(req.params.id);
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        const workItem = await WorkItem.findOneAndDelete({ _id: req.params.id, adminId });
         if (!workItem) return res.status(404).json({ success: false, message: 'Work item not found' });
         res.json({ success: true, message: 'Work item deleted' });
     } catch (error) {

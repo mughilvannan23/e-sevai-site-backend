@@ -6,6 +6,10 @@ const purchaseSchema = new mongoose.Schema({
     required: [true, 'Order name is required'],
     trim: true
   },
+  adminId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   amount: {
     type: Number,
     required: [true, 'Amount is required'],

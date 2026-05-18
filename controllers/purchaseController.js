@@ -2,17 +2,19 @@ const Purchase = require('../models/Purchase');
 const Work = require('../models/Work');
 
 // Calculate current shop balance
-exports.calculateBalance = async () => {
+exports.calculateBalance = async (adminId) => {
+    if (!adminId) return { handCashBalance: 0, gpayBalance: 0 };
     // 1. Hand Cash Balance Calculation
     // Total Cash collected
     const totalCashResult = await Work.aggregate([
-        { $match: { paymentStatus: 'Paid' } },
+        { $match: { adminId, paymentStatus: 'Paid' } },
         { $group: { _id: null, total: { $sum: '$cashAmount' } } }
     ]);
     const totalCash = totalCashResult[0]?.total || 0;
 
     // Total Purchases (Expenses)
     const totalPurchaseResult = await Purchase.aggregate([
+        { $match: { adminId } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const totalPurchase = totalPurchaseResult[0]?.total || 0;
@@ -21,6 +23,7 @@ exports.calculateBalance = async () => {
     const totalTransferResult = await Work.aggregate([
         {
             $match: {
+                adminId,
                 'items.title': { $regex: /Handcash to Gpay Transfer/i },
                 paymentStatus: 'Paid'
             }
@@ -31,7 +34,7 @@ exports.calculateBalance = async () => {
 
     // Preset Deductions from Hand Cash
     const handCashDeductionsResult = await Work.aggregate([
-        { $match: { items: { $type: 'array' } } },
+        { $match: { adminId, items: { $type: 'array' } } },
         { $unwind: '$items' },
         { $match: { 'items.presetChargeType': 'Hand Cash' } },
         { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
@@ -43,14 +46,14 @@ exports.calculateBalance = async () => {
     // 2. GPay Balance Calculation
     // Total GPay collected
     const totalGPayResult = await Work.aggregate([
-        { $match: { paymentStatus: 'Paid' } },
+        { $match: { adminId, paymentStatus: 'Paid' } },
         { $group: { _id: null, total: { $sum: '$gpayAmount' } } }
     ]);
     const totalGPay = totalGPayResult[0]?.total || 0;
 
     // Preset Deductions from GPay
     const gpayDeductionsResult = await Work.aggregate([
-        { $match: { items: { $type: 'array' } } },
+        { $match: { adminId, items: { $type: 'array' } } },
         { $unwind: '$items' },
         { $match: { 'items.presetChargeType': { $in: ['GPay', 'Recharge'] } } },
         { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
@@ -70,8 +73,9 @@ exports.calculateBalance = async () => {
 // @access  Private/Admin
 exports.getAllPurchases = async (req, res) => {
     try {
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         const { startDate, endDate, filter } = req.query;
-        let query = {};
+        let query = { adminId };
 
         if (filter === 'today') {
             const today = new Date();
@@ -89,7 +93,7 @@ exports.getAllPurchases = async (req, res) => {
         }
 
         const purchases = await Purchase.find(query).sort({ date: -1 });
-        const shopBalance = await exports.calculateBalance();
+        const shopBalance = await exports.calculateBalance(adminId);
 
         res.json({
             success: true,
@@ -110,6 +114,7 @@ exports.getAllPurchases = async (req, res) => {
 // @access  Private/Admin
 exports.createPurchase = async (req, res) => {
     try {
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         const { orderName, amount, date } = req.body;
 
         if (!orderName || !amount) {
@@ -119,7 +124,7 @@ exports.createPurchase = async (req, res) => {
             });
         }
 
-        const shopBalance = await exports.calculateBalance();
+        const shopBalance = await exports.calculateBalance(adminId);
         const currentBalance = shopBalance.handCashBalance;
 
         if (amount > currentBalance) {
@@ -132,7 +137,8 @@ exports.createPurchase = async (req, res) => {
         const purchase = new Purchase({
             orderName,
             amount,
-            date: date || Date.now()
+            date: date || Date.now(),
+            adminId
         });
 
         await purchase.save();
@@ -156,8 +162,9 @@ exports.createPurchase = async (req, res) => {
 // @access  Private/Admin
 exports.updatePurchase = async (req, res) => {
     try {
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         const { orderName, amount, date } = req.body;
-        const purchase = await Purchase.findById(req.params.id);
+        const purchase = await Purchase.findOne({ _id: req.params.id, adminId });
 
         if (!purchase) {
             return res.status(404).json({
@@ -168,7 +175,7 @@ exports.updatePurchase = async (req, res) => {
 
         // Check balance if amount is increased
         if (amount && amount > purchase.amount) {
-            const shopBalance = await exports.calculateBalance();
+            const shopBalance = await exports.calculateBalance(adminId);
             const currentBalance = shopBalance.handCashBalance + purchase.amount; // Add back current purchase amount to check total available
 
             if (amount > currentBalance) {
@@ -204,7 +211,8 @@ exports.updatePurchase = async (req, res) => {
 // @access  Private/Admin
 exports.deletePurchase = async (req, res) => {
     try {
-        const purchase = await Purchase.findById(req.params.id);
+        const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        const purchase = await Purchase.findOneAndDelete({ _id: req.params.id, adminId });
 
         if (!purchase) {
             return res.status(404).json({
@@ -212,8 +220,6 @@ exports.deletePurchase = async (req, res) => {
                 message: 'Purchase not found'
             });
         }
-
-        await Purchase.findByIdAndDelete(req.params.id);
 
         res.json({
             success: true,
