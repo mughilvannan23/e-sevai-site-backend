@@ -55,7 +55,7 @@ exports.calculateBalance = async (adminId) => {
     const gpayDeductionsResult = await Work.aggregate([
         { $match: { adminId, items: { $type: 'array' } } },
         { $unwind: '$items' },
-        { $match: { 'items.presetChargeType': { $in: ['GPay', 'Recharge'] } } },
+        { $match: { 'items.presetChargeType': { $in: ['GPay'] } } },
         { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
     ]);
     const gpayDeductions = gpayDeductionsResult[0]?.total || 0;

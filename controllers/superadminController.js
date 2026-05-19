@@ -4,11 +4,16 @@ const bcrypt = require('bcryptjs');
 // Create a new shop admin
 const createShopAdmin = async (req, res) => {
   try {
-    const { shopName, mobile, password } = req.body;
+    const { shopName, mobile, password, subscriptionMonths } = req.body;
 
     if (!shopName || !mobile || !password) {
       return res.status(400).json({ success: false, message: 'Shop name, mobile, and password are required.' });
     }
+
+    const months = parseInt(subscriptionMonths) || 1;
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + months);
 
     const existingUser = await User.findOne({ mobile: mobile.trim() });
     if (existingUser) {
@@ -21,7 +26,9 @@ const createShopAdmin = async (req, res) => {
       password,
       role: 'admin',
       shopName: shopName.trim(),
-      isActive: true
+      isActive: true,
+      subscriptionStartDate: startDate,
+      subscriptionEndDate: endDate
     });
 
     await user.save();
@@ -34,6 +41,8 @@ const createShopAdmin = async (req, res) => {
         shopName: user.shopName,
         mobile: user.mobile,
         isActive: user.isActive,
+        subscriptionStartDate: user.subscriptionStartDate,
+        subscriptionEndDate: user.subscriptionEndDate,
         createdAt: user.createdAt
       }
     });
@@ -48,7 +57,7 @@ const createShopAdmin = async (req, res) => {
 const getShopAdmins = async (req, res) => {
   try {
     const admins = await User.find({ role: 'admin' })
-      .select('shopName mobile isActive createdAt lastLogin')
+      .select('shopName mobile isActive subscriptionStartDate subscriptionEndDate createdAt lastLogin')
       .sort({ createdAt: -1 });
 
     res.json({
@@ -65,7 +74,7 @@ const getShopAdmins = async (req, res) => {
 const updateShopAdmin = async (req, res) => {
   try {
     const { id } = req.params;
-    const { shopName, mobile, password, isActive } = req.body;
+    const { shopName, mobile, password, isActive, subscriptionMonths, subscriptionEndDate } = req.body;
 
     const user = await User.findOne({ _id: id, role: 'admin' });
     
@@ -84,6 +93,25 @@ const updateShopAdmin = async (req, res) => {
     if (mobile) user.mobile = mobile.trim();
     if (isActive !== undefined) user.isActive = isActive;
 
+    if (subscriptionMonths) {
+      const months = parseInt(subscriptionMonths);
+      const endDate = user.subscriptionEndDate && user.subscriptionEndDate > new Date() 
+        ? new Date(user.subscriptionEndDate) 
+        : new Date();
+      endDate.setMonth(endDate.getMonth() + months);
+      
+      // If no start date exists, set it to now
+      if (!user.subscriptionStartDate) {
+        user.subscriptionStartDate = new Date();
+      }
+      user.subscriptionEndDate = endDate;
+    } else if (subscriptionEndDate) {
+      user.subscriptionEndDate = new Date(subscriptionEndDate);
+      if (!user.subscriptionStartDate) {
+        user.subscriptionStartDate = new Date();
+      }
+    }
+
     if (password && password.trim() !== '') {
       user.password = password; // pre-save hook will hash it
     }
@@ -98,6 +126,8 @@ const updateShopAdmin = async (req, res) => {
         shopName: user.shopName,
         mobile: user.mobile,
         isActive: user.isActive,
+        subscriptionStartDate: user.subscriptionStartDate,
+        subscriptionEndDate: user.subscriptionEndDate,
         createdAt: user.createdAt
       }
     });

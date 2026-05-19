@@ -14,13 +14,39 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password').populate('adminId', 'shopName');
+    const user = await User.findById(decoded.id).select('-password').populate('adminId', 'shopName subscriptionEndDate');
     
     if (!user || !user.isActive) {
       return res.status(401).json({ 
         success: false, 
         message: 'Token is not valid or user is inactive.' 
       });
+    }
+
+    // Check subscription status
+    const now = new Date();
+    let isExpired = false;
+
+    if (user.role === 'admin') {
+      if (user.subscriptionEndDate && new Date(user.subscriptionEndDate) < now) {
+        isExpired = true;
+      }
+    } else if (user.role === 'employee') {
+      if (user.adminId && user.adminId.subscriptionEndDate && new Date(user.adminId.subscriptionEndDate) < now) {
+        isExpired = true;
+      }
+    }
+
+    if (isExpired) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your shop subscription has expired. Please contact the Super Admin to renew.'
+      });
+    }
+
+    if (user.adminId && typeof user.adminId === 'object' && user.adminId._id) {
+       user.shopName = user.adminId.shopName;
+       user.adminId = user.adminId._id;
     }
 
     req.user = user;

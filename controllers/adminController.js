@@ -153,27 +153,33 @@ const getDashboardStats = async (req, res) => {
 
         const totalProfitAgg = await Work.aggregate([
             {
+                $match: { adminId, paymentStatus: 'Paid' }
+            },
+            {
                 $project: {
                     paymentStatus: 1,
                     otherCharges: { $ifNull: ['$otherCharges', 0] },
+                    totalDiscount: { $ifNull: ['$totalDiscount', 0] },
                     serviceCharge: {
                         $sum: {
                             $map: {
                                 input: { $ifNull: ['$items', []] },
                                 as: 'item',
-                                in: { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] }
+                                in: { 
+                                    $add: [
+                                        { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] },
+                                        { $ifNull: ['$$item.otherCharges', 0] }
+                                    ]
+                                }
                             }
                         }
                     }
                 }
             },
             {
-                $match: { adminId, paymentStatus: 'Paid' }
-            },
-            {
                 $group: {
                     _id: null,
-                    totalProfit: { $sum: { $subtract: [{ $add: ['$serviceCharge', '$otherCharges'] }, { $ifNull: ['$totalDiscount', 0] }] } }
+                    totalProfit: { $sum: { $subtract: ['$serviceCharge', '$totalDiscount'] } }
                 }
             }
         ]);
@@ -343,6 +349,15 @@ const getRevenueReport = async (req, res) => {
                             }
                         }
                     },
+                    entryOtherCharges: {
+                        $sum: {
+                            $map: {
+                                input: { $ifNull: ['$items', []] },
+                                as: 'item',
+                                in: { $ifNull: ['$$item.otherCharges', 0] }
+                            }
+                        }
+                    },
                     collectedAmount: { $ifNull: ['$amount', 0] }
                 }
             },
@@ -351,7 +366,7 @@ const getRevenueReport = async (req, res) => {
                     expectedRevenue: { $add: ['$entryWorkCharge', '$entryServiceCharge'] },
                     netProfit: {
                         $subtract: [
-                            { $add: ['$entryServiceCharge', { $ifNull: ['$otherCharges', 0] }] },
+                            { $add: ['$entryServiceCharge', '$entryOtherCharges', { $ifNull: ['$otherCharges', 0] }] },
                             { $ifNull: ['$totalDiscount', 0] }
                         ]
                     }
@@ -367,7 +382,7 @@ const getRevenueReport = async (req, res) => {
                     totalWorkCharge: { $sum: '$entryWorkCharge' },
                     totalServiceCharge: { $sum: '$entryServiceCharge' },
                     totalBaseCost: { $sum: '$expectedRevenue' },
-                    totalOtherCharges: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$otherCharges', 0] }, 0] } },
+                    totalOtherCharges: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $add: ['$entryOtherCharges', { $ifNull: ['$otherCharges', 0] }] }, 0] } },
                     totalGpayAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$gpayAmount', 0] }, 0] } },
                     totalCashAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$cashAmount', 0] }, 0] } },
                     totalApplicationFee: { $sum: { $ifNull: ['$applicationFee', 0] } },

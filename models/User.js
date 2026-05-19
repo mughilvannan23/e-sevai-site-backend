@@ -51,6 +51,14 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  subscriptionStartDate: {
+    type: Date,
+    default: null
+  },
+  subscriptionEndDate: {
+    type: Date,
+    default: null
+  },
   lastLogin: {
     type: Date
   },

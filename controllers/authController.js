@@ -22,7 +22,7 @@ const login = async (req, res) => {
     let user = await User.findOne({
       mobile: trimmedMobile,
       isActive: true
-    }).select('+password').populate('adminId', 'shopName');
+    }).select('+password').populate('adminId', 'shopName subscriptionEndDate');
 
     if (user) {
       // ✅ User exists in database - verify password
@@ -32,6 +32,26 @@ const login = async (req, res) => {
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
+        });
+      }
+
+      // Check subscription
+      const now = new Date();
+      let isExpired = false;
+      if (user.role === 'admin') {
+        if (user.subscriptionEndDate && new Date(user.subscriptionEndDate) < now) {
+          isExpired = true;
+        }
+      } else if (user.role === 'employee') {
+        if (user.adminId && user.adminId.subscriptionEndDate && new Date(user.adminId.subscriptionEndDate) < now) {
+          isExpired = true;
+        }
+      }
+
+      if (isExpired) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your shop subscription has expired. Please contact the Super Admin to renew.'
         });
       }
     } else {
@@ -99,7 +119,7 @@ const login = async (req, res) => {
         role: user.role,
         employeeId: user.employeeId,
         lastLogin: user.lastLogin,
-        shopName: user.role === 'employee' && user.adminId ? user.adminId.shopName : user.shopName
+        shopName: user.role === 'employee' && user.adminId && user.adminId.shopName ? user.adminId.shopName : user.shopName
       }
     });
 
@@ -127,7 +147,7 @@ const getProfile = async (req, res) => {
         role: req.user.role,
         employeeId: req.user.employeeId,
         lastLogin: req.user.lastLogin,
-        shopName: req.user.role === 'employee' && req.user.adminId ? req.user.adminId.shopName : req.user.shopName
+        shopName: req.user.shopName
       }
     });
   } catch (error) {
