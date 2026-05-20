@@ -45,5 +45,9 @@ router.post('/login', loginValidation, validateRequest, login);
 router.get('/profile', authenticate, getProfile);
 router.put('/change-password', authenticate, changePasswordValidation, validateRequest, () => { });
 router.post('/logout', authenticate, logout);
+router.post('/refresh-token', authenticate, (req, res) => {
+  const token = req.user.generateAuthToken();
+  res.json({ success: true, token });
+});
 
 module.exports = router;

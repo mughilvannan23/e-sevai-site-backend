@@ -84,7 +84,7 @@ const workSchema = new mongoose.Schema({
     },
     presetChargeType: {
       type: String,
-      enum: ['GPay', 'Hand Cash', 'Recharge', 'None'],
+      enum: ['GPay', 'Hand Cash', 'Recharge', 'AEPS', 'None'],
       default: 'None'
     },
     presetAmount: {
@@ -121,7 +121,7 @@ const workSchema = new mongoose.Schema({
   },
   paymentStatus: {
     type: String,
-    enum: ['Paid', 'Pending'],
+    enum: ['Paid', 'Pending', 'None'],
     default: 'Pending'
   },
   workStatus: {

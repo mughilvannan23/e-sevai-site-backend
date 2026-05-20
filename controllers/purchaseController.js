@@ -36,7 +36,7 @@ exports.calculateBalance = async (adminId) => {
     const handCashDeductionsResult = await Work.aggregate([
         { $match: { adminId, items: { $type: 'array' } } },
         { $unwind: '$items' },
-        { $match: { 'items.presetChargeType': 'Hand Cash' } },
+        { $match: { 'items.presetChargeType': { $in: ['Hand Cash', 'AEPS'] } } },
         { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
     ]);
     const handCashDeductions = handCashDeductionsResult[0]?.total || 0;

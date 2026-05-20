@@ -22,7 +22,7 @@ const workItemSchema = new mongoose.Schema({
   },
   chargeType: {
     type: String,
-    enum: ['None', 'GPay', 'Hand Cash', 'Recharge'],
+    enum: ['None', 'GPay', 'Hand Cash', 'Recharge', 'AEPS'],
     default: 'None'
   },
   status: {

@@ -65,7 +65,9 @@ const createWork = async (req, res) => {
         const itemPresetAmt = parseFloat(item.presetAmount) || 0;
         totalOtherCharges += itemOtherC;
         totalDiscount += itemDiscount;
-        calculatedAppFee += itemPresetAmt;
+        if (item.presetChargeType !== 'AEPS') {
+          calculatedAppFee += itemPresetAmt;
+        }
         
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
@@ -117,6 +119,11 @@ const createWork = async (req, res) => {
           message: `Insufficient Shop Balance. Available: ₹${currentBalance.toLocaleString()}`
         });
       }
+    }
+
+    const hasAEPS = processedItems.every(item => item.presetChargeType === 'AEPS');
+    if (hasAEPS && processedItems.length > 0) {
+      paymentStatus = 'None';
     }
 
     // Create work entry (using 'employee' field as per model)
@@ -441,7 +448,9 @@ const updateWork = async (req, res) => {
         const itemPresetAmt = parseFloat(item.presetAmount) || 0;
         totalOtherCharges += itemOtherC;
         totalDiscount += itemDiscount;
-        calculatedAppFee += itemPresetAmt;
+        if (item.presetChargeType !== 'AEPS') {
+          calculatedAppFee += itemPresetAmt;
+        }
         if (item.workItemId) {
           const selectedItem = await WorkItem.findById(item.workItemId);
           if (selectedItem) {
@@ -479,6 +488,14 @@ const updateWork = async (req, res) => {
       work.totalDiscount = totalDiscount;
       work.otherCharges = totalOtherCharges;
       work.applicationFee = calculatedAppFee;
+      
+      if (processedItems.length > 0 && processedItems.every(item => item.presetChargeType === 'AEPS')) {
+        work.paymentStatus = 'None';
+      }
+    } else {
+      if (work.items && work.items.length > 0 && work.items.every(item => item.presetChargeType === 'AEPS')) {
+        work.paymentStatus = 'None';
+      }
     }
 
     // Secondary check for transfer in processed items
