@@ -58,6 +58,13 @@ const createWork = async (req, res) => {
     const processedItems = [];
 
     if (items && Array.isArray(items)) {
+      const workItemIds = items.filter(i => i.workItemId).map(i => i.workItemId);
+      const workItemsList = await WorkItem.find({ _id: { $in: workItemIds } }).lean();
+      const workItemsMap = workItemsList.reduce((acc, curr) => {
+        acc[curr._id.toString()] = curr;
+        return acc;
+      }, {});
+
       for (const item of items) {
         const qty = parseInt(item.quantity) || 1;
         const itemOtherC = parseFloat(item.otherCharges) || 0;
@@ -70,7 +77,7 @@ const createWork = async (req, res) => {
         }
         
         if (item.workItemId) {
-          const selectedItem = await WorkItem.findById(item.workItemId);
+          const selectedItem = workItemsMap[item.workItemId.toString()];
           if (selectedItem) {
             totalWorkCharge += selectedItem.workCharge * qty;
             totalServiceCharge += selectedItem.serviceCharge * qty;
@@ -199,13 +206,15 @@ const getAllEmployeeWorks = async (req, res) => {
       ];
     }
 
-    const works = await Work.find(query)
-      .populate('employee', 'name mobile employeeId')
-      .sort({ date: -1, createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Work.countDocuments(query);
+    const [works, total] = await Promise.all([
+      Work.find(query)
+        .populate('employee', 'name mobile employeeId')
+        .sort({ date: -1, createdAt: -1 })
+        .limit(limit * 1)
+        .skip((page - 1) * limit)
+        .lean(),
+      Work.countDocuments(query)
+    ]);
 
     res.json({
       success: true,
@@ -270,14 +279,16 @@ const getMyWorks = async (req, res) => {
       ];
     }
 
-    // Get works with pagination
-    const works = await Work.find(query)
-      .populate('employee', 'name email employeeId')
-      .sort({ date: -1, createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Work.countDocuments(query);
+    // Get works with pagination concurrently
+    const [works, total] = await Promise.all([
+      Work.find(query)
+        .populate('employee', 'name email employeeId')
+        .sort({ date: -1, createdAt: -1 })
+        .limit(limit * 1)
+        .skip((page - 1) * limit)
+        .lean(),
+      Work.countDocuments(query)
+    ]);
 
     res.json({
       success: true,
@@ -441,6 +452,14 @@ const updateWork = async (req, res) => {
       let totalDiscount = 0;
       calculatedAppFee = 0;
       const processedItems = [];
+
+      const workItemIds = items.filter(i => i.workItemId).map(i => i.workItemId);
+      const workItemsList = await WorkItem.find({ _id: { $in: workItemIds } }).lean();
+      const workItemsMap = workItemsList.reduce((acc, curr) => {
+        acc[curr._id.toString()] = curr;
+        return acc;
+      }, {});
+
       for (const item of items) {
         const qty = parseInt(item.quantity) || 1;
         const itemOtherC = parseFloat(item.otherCharges) || 0;
@@ -452,7 +471,7 @@ const updateWork = async (req, res) => {
           calculatedAppFee += itemPresetAmt;
         }
         if (item.workItemId) {
-          const selectedItem = await WorkItem.findById(item.workItemId);
+          const selectedItem = workItemsMap[item.workItemId.toString()];
           if (selectedItem) {
             totalWorkCharge += selectedItem.workCharge * qty;
             totalServiceCharge += selectedItem.serviceCharge * qty;
@@ -659,10 +678,23 @@ const getShopBalance = async (req, res) => {
   try {
     const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
     const balances = await purchaseController.calculateBalance(adminId);
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const todayGpayAgg = await Work.aggregate([
+      { $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$gpayAmount', 0] } } } }
+    ]);
+    const todayGpay = todayGpayAgg[0]?.total || 0;
+
     res.json({
       success: true,
       shopBalance: balances.handCashBalance,
-      gpayBalance: balances.gpayBalance
+      gpayBalance: balances.gpayBalance,
+      todayGpay: todayGpay
     });
   } catch (error) {
     console.error('SHOP BALANCE ERROR:', error);

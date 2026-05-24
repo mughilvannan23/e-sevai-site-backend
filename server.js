@@ -30,8 +30,16 @@ app.use(helmet({
 }));
 
 // CORS configuration
+const allowedOrigins = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost:5173', 'http://localhost:3000'];
 app.use(cors({
-  origin: "*", // 🔥 TEMP FULL ALLOW
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
 }));
 
 // Validate required environment values before startup
@@ -73,8 +81,8 @@ const limiter = rateLimit({
 app.use('/api', limiter);
 
 // Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Logging middleware
 app.use(morgan('dev'));

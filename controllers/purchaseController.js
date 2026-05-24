@@ -4,60 +4,58 @@ const Work = require('../models/Work');
 // Calculate current shop balance
 exports.calculateBalance = async (adminId) => {
     if (!adminId) return { handCashBalance: 0, gpayBalance: 0 };
-    // 1. Hand Cash Balance Calculation
-    // Total Cash collected
-    const totalCashResult = await Work.aggregate([
-        { $match: { adminId, paymentStatus: 'Paid' } },
-        { $group: { _id: null, total: { $sum: '$cashAmount' } } }
+    const [
+        totalCashResult,
+        totalPurchaseResult,
+        totalTransferResult,
+        handCashDeductionsResult,
+        totalGPayResult,
+        gpayDeductionsResult
+    ] = await Promise.all([
+        Work.aggregate([
+            { $match: { adminId, paymentStatus: 'Paid' } },
+            { $group: { _id: null, total: { $sum: '$cashAmount' } } }
+        ]),
+        Purchase.aggregate([
+            { $match: { adminId } },
+            { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]),
+        Work.aggregate([
+            {
+                $match: {
+                    adminId,
+                    'items.title': { $regex: /Handcash to Gpay Transfer/i },
+                    paymentStatus: 'Paid'
+                }
+            },
+            { $group: { _id: null, total: { $sum: '$applicationFee' } } }
+        ]),
+        Work.aggregate([
+            { $match: { adminId, items: { $type: 'array' } } },
+            { $unwind: '$items' },
+            { $match: { 'items.presetChargeType': { $in: ['Hand Cash', 'AEPS'] } } },
+            { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
+        ]),
+        Work.aggregate([
+            { $match: { adminId, paymentStatus: 'Paid' } },
+            { $group: { _id: null, total: { $sum: '$gpayAmount' } } }
+        ]),
+        Work.aggregate([
+            { $match: { adminId, items: { $type: 'array' } } },
+            { $unwind: '$items' },
+            { $match: { 'items.presetChargeType': { $in: ['GPay'] } } },
+            { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
+        ])
     ]);
+
     const totalCash = totalCashResult[0]?.total || 0;
-
-    // Total Purchases (Expenses)
-    const totalPurchaseResult = await Purchase.aggregate([
-        { $match: { adminId } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
     const totalPurchase = totalPurchaseResult[0]?.total || 0;
-
-    // Total Transfers (Handcash to Gpay)
-    const totalTransferResult = await Work.aggregate([
-        {
-            $match: {
-                adminId,
-                'items.title': { $regex: /Handcash to Gpay Transfer/i },
-                paymentStatus: 'Paid'
-            }
-        },
-        { $group: { _id: null, total: { $sum: '$applicationFee' } } }
-    ]);
     const totalTransfer = totalTransferResult[0]?.total || 0;
-
-    // Preset Deductions from Hand Cash
-    const handCashDeductionsResult = await Work.aggregate([
-        { $match: { adminId, items: { $type: 'array' } } },
-        { $unwind: '$items' },
-        { $match: { 'items.presetChargeType': { $in: ['Hand Cash', 'AEPS'] } } },
-        { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
-    ]);
     const handCashDeductions = handCashDeductionsResult[0]?.total || 0;
-
+    
     const handCashBalance = totalCash - totalPurchase - totalTransfer - handCashDeductions;
 
-    // 2. GPay Balance Calculation
-    // Total GPay collected
-    const totalGPayResult = await Work.aggregate([
-        { $match: { adminId, paymentStatus: 'Paid' } },
-        { $group: { _id: null, total: { $sum: '$gpayAmount' } } }
-    ]);
     const totalGPay = totalGPayResult[0]?.total || 0;
-
-    // Preset Deductions from GPay
-    const gpayDeductionsResult = await Work.aggregate([
-        { $match: { adminId, items: { $type: 'array' } } },
-        { $unwind: '$items' },
-        { $match: { 'items.presetChargeType': { $in: ['GPay'] } } },
-        { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
-    ]);
     const gpayDeductions = gpayDeductionsResult[0]?.total || 0;
 
     const gpayBalance = totalGPay - gpayDeductions;

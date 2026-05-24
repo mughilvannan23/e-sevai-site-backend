@@ -39,4 +39,6 @@ const workItemSchema = new mongoose.Schema({
   }
 });
 
+workItemSchema.index({ adminId: 1 });
+
 module.exports = mongoose.model('WorkItem', workItemSchema);

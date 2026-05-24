@@ -72,14 +72,16 @@ const getAllWorks = async (req, res) => {
             ];
         }
 
-        // Get works with pagination
-        const works = await Work.find(query)
-            .populate('employee', 'name mobile employeeId')
-            .sort({ date: -1, createdAt: -1 })
-            .limit(limit * 1)
-            .skip((page - 1) * limit);
-
-        const total = await Work.countDocuments(query);
+        // Get works with pagination concurrently
+        const [works, total] = await Promise.all([
+            Work.find(query)
+                .populate('employee', 'name mobile employeeId')
+                .sort({ date: -1, createdAt: -1 })
+                .limit(limit * 1)
+                .skip((page - 1) * limit)
+                .lean(),
+            Work.countDocuments(query)
+        ]);
 
         res.json({
             success: true,
@@ -114,77 +116,42 @@ const getDashboardStats = async (req, res) => {
 
         const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         
-        // Get employee statistics
-        const totalEmployees = await User.countDocuments({ role: 'employee', isActive: true, adminId });
-
-        // Get work statistics
-        const todayWorks = await Work.find({
-            adminId,
-            date: { $gte: today, $lt: tomorrow }
-        });
-
-        const monthWorks = await Work.find({
-            adminId,
-            date: { $gte: thisMonth }
-        });
-
-        const totalWorks = await Work.countDocuments({ adminId });
-
-        const totalRevenueAgg = await Work.aggregate([
-            { $match: { adminId, paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
+        // Parallelize database queries
+        const [
+            totalEmployees,
+            todayWorks,
+            monthWorks,
+            totalWorks,
+            totalRevenueAgg,
+            monthRevenueAgg,
+            todayRevenueAgg,
+            todayGpayAgg,
+            pendingPaymentsCount,
+            pendingWorks,
+            completedWorks,
+            totalProfitAgg,
+            shopBalances
+        ] = await Promise.all([
+            User.countDocuments({ role: 'employee', isActive: true, adminId }),
+            Work.find({ adminId, date: { $gte: today, $lt: tomorrow } }).lean(),
+            Work.find({ adminId, date: { $gte: thisMonth } }).lean(),
+            Work.countDocuments({ adminId }),
+            Work.aggregate([{ $match: { adminId, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
+            Work.aggregate([{ $match: { adminId, date: { $gte: thisMonth }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
+            Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
+            Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $ifNull: ['$gpayAmount', 0] } } } }]),
+            Work.countDocuments({ adminId, paymentStatus: 'Pending' }),
+            Work.countDocuments({ adminId, workStatus: { $in: ['Pending', 'In Progress'] } }),
+            Work.countDocuments({ adminId, workStatus: 'Completed' }),
+            Work.aggregate([
+                { $match: { adminId, paymentStatus: 'Paid' } },
+                { $project: { paymentStatus: 1, otherCharges: { $ifNull: ['$otherCharges', 0] }, totalDiscount: { $ifNull: ['$totalDiscount', 0] }, serviceCharge: { $sum: { $map: { input: { $ifNull: ['$items', []] }, as: 'item', in: { $add: [ { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] }, { $ifNull: ['$$item.otherCharges', 0] } ] } } } } } },
+                { $group: { _id: null, totalProfit: { $sum: { $subtract: ['$serviceCharge', '$totalDiscount'] } } } }
+            ]),
+            purchaseController.calculateBalance(adminId)
         ]);
 
-        const monthRevenueAgg = await Work.aggregate([
-            { $match: { adminId, date: { $gte: thisMonth }, paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
-        ]);
-
-        const todayRevenueAgg = await Work.aggregate([
-            { $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } },
-            { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }
-        ]);
-
-        const pendingPaymentsCount = await Work.countDocuments({ adminId, paymentStatus: 'Pending' });
-
-        const pendingWorks = await Work.countDocuments({ adminId, workStatus: { $in: ['Pending', 'In Progress'] } });
-
-        const completedWorks = await Work.countDocuments({ adminId, workStatus: 'Completed' });
-
-        const totalProfitAgg = await Work.aggregate([
-            {
-                $match: { adminId, paymentStatus: 'Paid' }
-            },
-            {
-                $project: {
-                    paymentStatus: 1,
-                    otherCharges: { $ifNull: ['$otherCharges', 0] },
-                    totalDiscount: { $ifNull: ['$totalDiscount', 0] },
-                    serviceCharge: {
-                        $sum: {
-                            $map: {
-                                input: { $ifNull: ['$items', []] },
-                                as: 'item',
-                                in: { 
-                                    $add: [
-                                        { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] },
-                                        { $ifNull: ['$$item.otherCharges', 0] }
-                                    ]
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalProfit: { $sum: { $subtract: ['$serviceCharge', '$totalDiscount'] } }
-                }
-            }
-        ]);
         const totalNetProfit = totalProfitAgg[0]?.totalProfit || 0;
-        const shopBalances = await purchaseController.calculateBalance(adminId);
 
         res.json({
             success: true,
@@ -206,7 +173,8 @@ const getDashboardStats = async (req, res) => {
                     pending: pendingPaymentsCount,
                     profit: totalNetProfit,
                     shopBalance: shopBalances.handCashBalance,
-                    gpayBalance: shopBalances.gpayBalance
+                    gpayBalance: shopBalances.gpayBalance,
+                    todayGpay: todayGpayAgg[0]?.total || 0
                 }
             }
         });
@@ -233,45 +201,77 @@ const getEmployeePerformance = async (req, res) => {
 
         const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         // Get all active employees
-        const employees = await User.find({ role: 'employee', isActive: true, adminId }).select('-password');
+        const employees = await User.find({ role: 'employee', isActive: true, adminId }).select('-password').lean();
 
-        // Get performance data for each employee
-        const performanceData = await Promise.all(
-            employees.map(async (employee) => {
-                const works = await Work.find({
-                    employee: employee._id,
+        const employeeMap = employees.reduce((acc, emp) => {
+            acc[emp._id.toString()] = {
+                id: emp._id,
+                name: emp.name,
+                mobile: emp.mobile,
+                employeeId: emp.employeeId
+            };
+            return acc;
+        }, {});
+
+        const employeeIds = employees.map(emp => emp._id);
+
+        const worksAgg = await Work.aggregate([
+            {
+                $match: {
+                    employee: { $in: employeeIds },
                     date: { $gte: start, $lte: end }
-                });
+                }
+            },
+            {
+                $group: {
+                    _id: '$employee',
+                    totalWorks: { $sum: 1 },
+                    completedWorks: { $sum: { $cond: [{ $eq: ['$workStatus', 'Completed'] }, 1, 0] } },
+                    inProgressWorks: { $sum: { $cond: [{ $in: ['$workStatus', ['Pending', 'In Progress']] }, 1, 0] } },
+                    totalAmount: { $sum: { $ifNull: ['$amount', 0] } },
+                    paidAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$amount', 0] }, 0] } },
+                    pendingAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, { $ifNull: ['$amount', 0] }, 0] } }
+                }
+            }
+        ]);
 
-                const completedWorks = works.filter(w => w.workStatus === 'Completed');
-                const inProgressWorks = works.filter(w => ['Pending', 'In Progress'].includes(w.workStatus));
-                const paidWorks = works.filter(w => w.paymentStatus === 'Paid');
-                const pendingPayments = works.filter(w => w.paymentStatus === 'Pending');
+        const performanceData = worksAgg.map(stat => {
+            const emp = employeeMap[stat._id.toString()];
+            if(!emp) return null;
+            return {
+                employee: emp,
+                stats: {
+                    totalWorks: stat.totalWorks,
+                    completedWorks: stat.completedWorks,
+                    inProgressWorks: stat.inProgressWorks,
+                    totalAmount: stat.totalAmount,
+                    paidAmount: stat.paidAmount,
+                    pendingAmount: stat.pendingAmount,
+                    completionRate: stat.totalWorks > 0 ? (stat.completedWorks / stat.totalWorks * 100).toFixed(1) : 0,
+                    paymentCollectionRate: stat.totalAmount > 0 ? (stat.paidAmount / stat.totalAmount * 100).toFixed(1) : 0
+                }
+            };
+        }).filter(Boolean);
 
-                const totalAmount = works.reduce((sum, w) => sum + w.amount, 0);
-                const paidAmount = paidWorks.reduce((sum, w) => sum + w.amount, 0);
-                const pendingAmount = pendingPayments.reduce((sum, w) => sum + w.amount, 0);
-
-                return {
-                    employee: {
-                        id: employee._id,
-                        name: employee.name,
-                        mobile: employee.mobile,
-                        employeeId: employee.employeeId
-                    },
+        // For employees with 0 works
+        const worksAggIds = worksAgg.map(s => s._id.toString());
+        employees.forEach(emp => {
+            if (!worksAggIds.includes(emp._id.toString())) {
+                performanceData.push({
+                    employee: employeeMap[emp._id.toString()],
                     stats: {
-                        totalWorks: works.length,
-                        completedWorks: completedWorks.length,
-                        inProgressWorks: inProgressWorks.length,
-                        totalAmount,
-                        paidAmount,
-                        pendingAmount,
-                        completionRate: works.length > 0 ? (completedWorks.length / works.length * 100).toFixed(1) : 0,
-                        paymentCollectionRate: totalAmount > 0 ? (paidAmount / totalAmount * 100).toFixed(1) : 0
+                        totalWorks: 0,
+                        completedWorks: 0,
+                        inProgressWorks: 0,
+                        totalAmount: 0,
+                        paidAmount: 0,
+                        pendingAmount: 0,
+                        completionRate: 0,
+                        paymentCollectionRate: 0
                     }
-                };
-            })
-        );
+                });
+            }
+        });
 
         // Sort by total works
         performanceData.sort((a, b) => b.stats.totalWorks - a.stats.totalWorks);

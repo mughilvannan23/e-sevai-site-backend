@@ -151,11 +151,8 @@ workSchema.pre('save', function (next) {
 });
 
 // Index for better query performance
-workSchema.index({ employee: 1, date: -1 });
-workSchema.index({ date: -1, paymentStatus: 1 });
-workSchema.index({ workStatus: 1 });
-
-module.exports = mongoose.model('Work', workSchema);
+workSchema.index({ adminId: 1 });
+workSchema.index({ adminId: 1, date: -1 });
 workSchema.index({ employee: 1, date: -1 });
 workSchema.index({ date: -1, paymentStatus: 1 });
 workSchema.index({ workStatus: 1 });
