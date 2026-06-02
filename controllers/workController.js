@@ -116,10 +116,12 @@ const createWork = async (req, res) => {
       workDate = currentTime;
     }
 
-    // Validation for Handcash to Gpay Transfer balance
-    const transferItem = processedItems.find(i => i.title.toLowerCase().includes('handcash to gpay transfer'));
+    // Validate Shop Balance for Handcash to Gpay Transfer only if becoming Paid
+    const transferItem = items.find(i => i.workTitle?.toLowerCase().includes('handcash to gpay transfer') || i.title?.toLowerCase().includes('handcash to gpay transfer'));
     if (transferItem && paymentStatus === 'Paid') {
-      const currentBalance = await purchaseController.getShopBalanceInternal();
+      const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+      const balances = await purchaseController.getShopBalanceInternal(adminId);
+      const currentBalance = balances.handCashBalance;
       if (calculatedAppFee > currentBalance) {
         return res.status(400).json({
           success: false,
@@ -129,9 +131,6 @@ const createWork = async (req, res) => {
     }
 
     const hasAEPS = processedItems.every(item => item.presetChargeType === 'AEPS');
-    if (hasAEPS && processedItems.length > 0) {
-      paymentStatus = 'None';
-    }
 
     // Create work entry (using 'employee' field as per model)
     const work = await Work.create({
@@ -508,19 +507,14 @@ const updateWork = async (req, res) => {
       work.otherCharges = totalOtherCharges;
       work.applicationFee = calculatedAppFee;
       
-      if (processedItems.length > 0 && processedItems.every(item => item.presetChargeType === 'AEPS')) {
-        work.paymentStatus = 'None';
-      }
-    } else {
-      if (work.items && work.items.length > 0 && work.items.every(item => item.presetChargeType === 'AEPS')) {
-        work.paymentStatus = 'None';
-      }
+      // AEPS paymentStatus override removed
     }
-
     // Secondary check for transfer in processed items
     const transferItem = work.items.find(i => i.title.toLowerCase().includes('handcash to gpay transfer'));
     if (transferItem && work.paymentStatus === 'Paid') {
-      const currentBalance = await purchaseController.getShopBalanceInternal();
+      const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+      const balances = await purchaseController.getShopBalanceInternal(adminId);
+      let currentBalance = balances.handCashBalance;
       // We must account for the current entry if it was already Paid (don't double count)
       // But getShopBalanceInternal already includes all PAID entries.
       // If we are UPDATING an existing Paid entry, we should add back its previous fee before checking.
@@ -625,12 +619,21 @@ const getMyWorkStats = async (req, res) => {
       date: { $gte: thisMonth }
     });
 
-    const totalWorks = await Work.countDocuments({ employee: req.user._id });
+    const totalWorks = await Work.countDocuments({ employee: req.user._id, date: { $gte: thisMonth } });
 
     const totalEarnings = await Work.aggregate([
-      { $match: { employee: req.user._id, paymentStatus: 'Paid' } },
+      { $match: { employee: req.user._id, paymentStatus: 'Paid', date: { $gte: thisMonth } } },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
     ]);
+
+    const aepsWorksCount = await Work.countDocuments({ employee: req.user._id, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } });
+    const aepsAmountAgg = await Work.aggregate([
+      { $match: { employee: req.user._id, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } } },
+      { $unwind: '$items' },
+      { $match: { 'items.presetChargeType': 'AEPS' } },
+      { $group: { _id: null, totalAepsAmount: { $sum: { $ifNull: ['$items.presetAmount', 0] } } } }
+    ]);
+    const totalAepsAmount = aepsAmountAgg[0]?.totalAepsAmount || 0;
 
     res.json({
       success: true,
@@ -642,7 +645,11 @@ const getMyWorkStats = async (req, res) => {
         totalWorks,
         totalEarnings: totalEarnings[0]?.total || 0,
         pendingWorks: monthWorks.filter(w => ['Pending', 'In Progress'].includes(w.workStatus)).length,
-        pendingAmount: monthWorks.filter(w => w.paymentStatus === 'Pending').reduce((sum, w) => sum + (w.totalAmount || w.amount), 0)
+        pendingAmount: monthWorks.filter(w => w.paymentStatus === 'Pending').reduce((sum, w) => sum + (w.totalAmount || w.amount), 0),
+        aeps: {
+          count: aepsWorksCount,
+          amount: totalAepsAmount
+        }
       }
     });
 
@@ -688,7 +695,13 @@ const getShopBalance = async (req, res) => {
       { $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$gpayAmount', 0] } } } }
     ]);
-    const todayGpay = todayGpayAgg[0]?.total || 0;
+    const todayGpayDeductionsAgg = await Work.aggregate([
+      { $match: { adminId, date: { $gte: today, $lt: tomorrow }, items: { $type: 'array' } } },
+      { $unwind: '$items' },
+      { $match: { 'items.presetChargeType': 'GPay' } },
+      { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
+    ]);
+    const todayGpay = (todayGpayAgg[0]?.total || 0) - (todayGpayDeductionsAgg[0]?.total || 0);
 
     res.json({
       success: true,

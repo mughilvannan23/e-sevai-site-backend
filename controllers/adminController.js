@@ -130,12 +130,15 @@ const getDashboardStats = async (req, res) => {
             pendingWorks,
             completedWorks,
             totalProfitAgg,
-            shopBalances
+            shopBalances,
+            aepsWorksCount,
+            aepsAmountAgg,
+            todayGpayDeductionsAgg
         ] = await Promise.all([
             User.countDocuments({ role: 'employee', isActive: true, adminId }),
             Work.find({ adminId, date: { $gte: today, $lt: tomorrow } }).lean(),
             Work.find({ adminId, date: { $gte: thisMonth } }).lean(),
-            Work.countDocuments({ adminId }),
+            Work.countDocuments({ adminId, date: { $gte: thisMonth } }),
             Work.aggregate([{ $match: { adminId, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
             Work.aggregate([{ $match: { adminId, date: { $gte: thisMonth }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
             Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
@@ -146,12 +149,26 @@ const getDashboardStats = async (req, res) => {
             Work.aggregate([
                 { $match: { adminId, paymentStatus: 'Paid' } },
                 { $project: { paymentStatus: 1, otherCharges: { $ifNull: ['$otherCharges', 0] }, totalDiscount: { $ifNull: ['$totalDiscount', 0] }, serviceCharge: { $sum: { $map: { input: { $ifNull: ['$items', []] }, as: 'item', in: { $add: [ { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] }, { $ifNull: ['$$item.otherCharges', 0] } ] } } } } } },
-                { $group: { _id: null, totalProfit: { $sum: { $subtract: ['$serviceCharge', '$totalDiscount'] } } } }
+                { $group: { _id: null, totalProfit: { $sum: { $subtract: [{ $add: ['$serviceCharge', '$otherCharges'] }, '$totalDiscount'] } } } }
             ]),
-            purchaseController.calculateBalance(adminId)
+            purchaseController.calculateBalance(adminId),
+            Work.countDocuments({ adminId, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } }),
+            Work.aggregate([
+                { $match: { adminId, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } } },
+                { $unwind: '$items' },
+                { $match: { 'items.presetChargeType': 'AEPS' } },
+                { $group: { _id: null, totalAepsAmount: { $sum: { $ifNull: ['$items.presetAmount', 0] } } } }
+            ]),
+            Work.aggregate([
+                { $match: { adminId, date: { $gte: today, $lt: tomorrow }, items: { $type: 'array' } } },
+                { $unwind: '$items' },
+                { $match: { 'items.presetChargeType': 'GPay' } },
+                { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
+            ])
         ]);
 
         const totalNetProfit = totalProfitAgg[0]?.totalProfit || 0;
+        const totalAepsAmount = aepsAmountAgg[0]?.totalAepsAmount || 0;
 
         res.json({
             success: true,
@@ -174,7 +191,11 @@ const getDashboardStats = async (req, res) => {
                     profit: totalNetProfit,
                     shopBalance: shopBalances.handCashBalance,
                     gpayBalance: shopBalances.gpayBalance,
-                    todayGpay: todayGpayAgg[0]?.total || 0
+                    todayGpay: (todayGpayAgg[0]?.total || 0) - (todayGpayDeductionsAgg[0]?.total || 0)
+                },
+                aeps: {
+                    count: aepsWorksCount,
+                    amount: totalAepsAmount
                 }
             }
         });
@@ -490,20 +511,24 @@ const downloadRevenueExcel = async (req, res) => {
         const worksheet = workbook.addWorksheet('Revenue Report');
 
         worksheet.columns = [
-            { header: 'Date', key: 'date', width: 15 },
-            { header: 'Time', key: 'time', width: 12 },
-            { header: 'Customer Name', key: 'customerName', width: 25 },
-            { header: 'Phone', key: 'phone', width: 15 },
+            { header: 'Date', key: 'date', width: 12 },
+            { header: 'Time', key: 'time', width: 10 },
+            { header: 'Customer Name', key: 'customerName', width: 20 },
+            { header: 'Phone', key: 'phone', width: 12 },
             { header: 'Work Items', key: 'workItems', width: 35 },
-            { header: 'App. Numbers', key: 'applicationNumbers', width: 25 },
-            { header: 'Work Status', key: 'workStatus', width: 15 },
-            { header: 'Discount', key: 'discount', width: 12 },
-            { header: 'GPay Amount', key: 'gpayAmount', width: 15 },
-            { header: 'Cash Amount', key: 'cashAmount', width: 15 },
-            { header: 'Application Fee', key: 'applicationFee', width: 15 },
-            { header: 'Total Amount', key: 'totalAmount', width: 15 },
-            { header: 'Payment Method', key: 'paymentMethod', width: 18 },
-            { header: 'Notes', key: 'notes', width: 30 }
+            { header: 'App. Numbers', key: 'applicationNumbers', width: 15 },
+            { header: 'Work Status', key: 'workStatus', width: 12 },
+            { header: 'GPay Amount', key: 'gpayAmount', width: 12 },
+            { header: 'Cash Amount', key: 'cashAmount', width: 12 },
+            { header: 'Total Amount', key: 'totalAmount', width: 12 },
+            { header: 'App Fee (Recharge)', key: 'applicationFee', width: 15 },
+            { header: 'AEPS Amount', key: 'aepsAmount', width: 15 },
+            { header: 'Service Charge', key: 'serviceCharge', width: 15 },
+            { header: 'Other Charges', key: 'otherCharges', width: 15 },
+            { header: 'Discount', key: 'discount', width: 10 },
+            { header: 'Net Profit', key: 'netProfit', width: 12 },
+            { header: 'Payment Method', key: 'paymentMethod', width: 15 },
+            { header: 'Notes', key: 'notes', width: 25 }
         ];
 
         works.forEach(work => {
@@ -521,6 +546,12 @@ const downloadRevenueExcel = async (req, res) => {
                 ? work.items.map(i => i.applicationNumber || '').filter(n => n !== '').join(', ')
                 : '-';
 
+            const serviceCharge = work.items ? work.items.reduce((sum, item) => sum + ((item.serviceChargeAtTime || 0) * (item.quantity || 1)), 0) : 0;
+            const aepsAmount = work.items ? work.items.reduce((sum, item) => sum + (item.presetChargeType === 'AEPS' ? (item.presetAmount || 0) : 0), 0) : 0;
+            const otherCharges = work.otherCharges || 0;
+            const discount = work.totalDiscount || 0;
+            const netProfit = work.paymentStatus === 'Paid' ? (serviceCharge + otherCharges - discount) : 0;
+
             worksheet.addRow({
                 date: formattedDate,
                 time: formattedTime,
@@ -528,14 +559,16 @@ const downloadRevenueExcel = async (req, res) => {
                 phone: work.customerPhone || '-',
                 workItems: workTitles,
                 applicationNumbers: appNums || '-',
-                amount: work.amount || 0,
-                discount: work.totalDiscount || 0,
+                workStatus: displayWorkStatus,
                 gpayAmount: work.gpayAmount || 0,
                 cashAmount: work.cashAmount || 0,
-                applicationFee: work.applicationFee || 0,
                 totalAmount: work.totalAmount || work.amount || 0,
-                paymentStatus: work.paymentStatus || 'Pending',
-                workStatus: displayWorkStatus,
+                applicationFee: work.applicationFee || 0,
+                aepsAmount: aepsAmount,
+                serviceCharge: serviceCharge,
+                otherCharges: otherCharges,
+                discount: discount,
+                netProfit: netProfit,
                 paymentMethod: work.paymentMethod || 'Cash',
                 notes: work.notes || '-'
             });
@@ -580,88 +613,74 @@ const downloadRevenuePDF = async (req, res) => {
             works = works.filter(w => w.employee && w.employee.name.toLowerCase().includes(employeeName.toLowerCase()));
         }
 
-        const doc = new PDFDocument({ margin: 30, size: 'A4' });
+        const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'attachment; filename=Revenue_Report.pdf');
 
         doc.pipe(res);
 
-        doc.fontSize(20).text('Revenue Report', { align: 'center' });
-        doc.moveDown();
-        doc.fontSize(12).text(`Date Range: ${start.toLocaleDateString('en-IN')} to ${end.toLocaleDateString('en-IN')}`);
-        doc.moveDown();
+        doc.fontSize(16).text('Revenue Report', { align: 'center' });
+        doc.moveDown(0.5);
+        doc.fontSize(10).text(`Date Range: ${start.toLocaleDateString('en-IN')} to ${end.toLocaleDateString('en-IN')}`, { align: 'center' });
+        doc.moveDown(1);
 
         const tableTop = margin => doc.y;
         let y = tableTop();
         const itemX = {
             date: 30,
-            time: 60,
-            customer: 85,
-            phone: 135,
-            items: 175,
+            customer: 80,
+            items: 130,
             appNum: 235,
-            gpay: 285,
+            gpay: 280,
             cash: 315,
-            total: 345,
-            disc: 375,
-            pStatus: 405,
-            wStatus: 435,
-            method: 465,
-            notes: 510
+            total: 350,
+            appFee: 385,
+            aeps: 430,
+            srvChg: 465,
+            other: 505,
+            disc: 540,
+            profit: 575,
+            pStatus: 610,
+            wStatus: 650,
+            method: 690,
+            notes: 730
         };
 
-        // Header
-        doc.fontSize(7).font('Helvetica-Bold');
-        doc.text('Date', itemX.date, y);
-        doc.text('Time', itemX.time, y);
-        doc.text('Customer', itemX.customer, y);
-        doc.text('Phone', itemX.phone, y);
-        doc.text('Work Items', itemX.items, y);
-        doc.text('App. No', itemX.appNum, y);
-        doc.text('GPay', itemX.gpay, y);
-        doc.text('Cash', itemX.cash, y);
-        doc.text('Total', itemX.total, y);
-        doc.text('Disc', itemX.disc, y);
-        doc.text('P.Status', itemX.pStatus, y);
-        doc.text('W.Status', itemX.wStatus, y);
-        doc.text('Method', itemX.method, y);
-        doc.text('Notes', itemX.notes, y);
-        doc.moveTo(30, y + 10).lineTo(565, y + 10).stroke();
-        y += 15;
+        const drawHeader = () => {
+            doc.fontSize(7).font('Helvetica-Bold');
+            doc.text('Date', itemX.date, y);
+            doc.text('Customer', itemX.customer, y);
+            doc.text('Work Items', itemX.items, y);
+            doc.text('App. No', itemX.appNum, y);
+            doc.text('GPay', itemX.gpay, y);
+            doc.text('Cash', itemX.cash, y);
+            doc.text('Total', itemX.total, y);
+            doc.text('App Fee', itemX.appFee, y);
+            doc.text('AEPS', itemX.aeps, y);
+            doc.text('Srv.Chg', itemX.srvChg, y);
+            doc.text('Other', itemX.other, y);
+            doc.text('Disc', itemX.disc, y);
+            doc.text('Profit', itemX.profit, y);
+            doc.text('P.Status', itemX.pStatus, y);
+            doc.text('W.Status', itemX.wStatus, y);
+            doc.text('Method', itemX.method, y);
+            doc.text('Notes', itemX.notes, y);
+            doc.moveTo(30, y + 10).lineTo(812, y + 10).stroke();
+            y += 15;
+        };
 
-        doc.font('Helvetica').fontSize(7);
-        let totalRevenue = 0;
-        let totalExpected = 0;
-        let totalProfit = 0;
+        drawHeader();
 
         works.forEach(work => {
-            if (y > 750) {
-                doc.addPage();
+            if (y > 540) {
+                doc.addPage({ margin: 30, size: 'A4', layout: 'landscape' });
                 y = 30;
-                // Re-add header on new page
-                doc.fontSize(7).font('Helvetica-Bold');
-                doc.text('Date', itemX.date, y);
-                doc.text('Time', itemX.time, y);
-                doc.text('Customer', itemX.customer, y);
-                doc.text('Phone', itemX.phone, y);
-                doc.text('Work Items', itemX.items, y);
-                doc.text('App. No', itemX.appNum, y);
-                doc.text('GPay', itemX.gpay, y);
-                doc.text('Cash', itemX.cash, y);
-                doc.text('Total', itemX.total, y);
-                doc.text('Disc', itemX.disc, y);
-                doc.text('P.Status', itemX.pStatus, y);
-                doc.text('W.Status', itemX.wStatus, y);
-                doc.text('Method', itemX.method, y);
-                doc.text('Notes', itemX.notes, y);
-                doc.moveTo(30, y + 10).lineTo(565, y + 10).stroke();
-                y += 15;
+                drawHeader();
             }
 
             const dateObj = new Date(work.date);
             const formattedDate = dateObj.toLocaleDateString('en-IN');
-            const formattedTime = dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
             const displayWorkStatus = work.workStatus === 'In Progress' ? 'Pending' : work.workStatus;
 
@@ -673,23 +692,31 @@ const downloadRevenuePDF = async (req, res) => {
                 ? work.items.map(i => i.applicationNumber || '').filter(n => n !== '').join(', ')
                 : '-';
 
-            const custName = (work.customerName || '-').substring(0, 12);
-            const phone = (work.customerPhone || '-').substring(0, 10);
-            const titlesShort = workTitles.substring(0, 20);
-            const appNumShort = appNums.substring(0, 15);
-            const notesShort = (work.notes || '-').substring(0, 10);
+            const serviceCharge = work.items ? work.items.reduce((sum, item) => sum + ((item.serviceChargeAtTime || 0) * (item.quantity || 1)), 0) : 0;
+            const aepsAmount = work.items ? work.items.reduce((sum, item) => sum + (item.presetChargeType === 'AEPS' ? (item.presetAmount || 0) : 0), 0) : 0;
+            const otherCharges = work.otherCharges || 0;
+            const discount = work.totalDiscount || 0;
+            const netProfit = work.paymentStatus === 'Paid' ? (serviceCharge + otherCharges - discount) : 0;
+            
+            const custName = (work.customerName || '-').substring(0, 10);
+            const titlesShort = workTitles.substring(0, 22);
+            const appNumShort = appNums.substring(0, 10);
+            const notesShort = (work.notes || '-').substring(0, 15);
 
             doc.font('Helvetica').fontSize(6);
             doc.text(formattedDate, itemX.date, y);
-            doc.text(formattedTime, itemX.time, y);
             doc.text(custName, itemX.customer, y);
-            doc.text(phone, itemX.phone, y);
             doc.text(titlesShort, itemX.items, y);
             doc.text(appNumShort, itemX.appNum, y);
             doc.text(`₹${work.gpayAmount || 0}`, itemX.gpay, y);
             doc.text(`₹${work.cashAmount || 0}`, itemX.cash, y);
             doc.text(`₹${work.totalAmount || work.amount || 0}`, itemX.total, y);
-            doc.text(`₹${work.totalDiscount || 0}`, itemX.disc, y);
+            doc.text(`₹${work.applicationFee || 0}`, itemX.appFee, y);
+            doc.text(`₹${aepsAmount}`, itemX.aeps, y);
+            doc.text(`₹${serviceCharge}`, itemX.srvChg, y);
+            doc.text(`₹${otherCharges}`, itemX.other, y);
+            doc.text(`₹${discount}`, itemX.disc, y);
+            doc.text(`₹${netProfit}`, itemX.profit, y);
             doc.text(work.paymentStatus || 'Pending', itemX.pStatus, y);
             doc.text(displayWorkStatus, itemX.wStatus, y);
             doc.text(work.paymentMethod || 'Cash', itemX.method, y);
@@ -698,15 +725,17 @@ const downloadRevenuePDF = async (req, res) => {
             y += 15;
         });
 
-        doc.moveTo(30, y).lineTo(565, y).stroke();
+        doc.moveTo(30, y).lineTo(812, y).stroke();
         y += 5;
-        doc.font('Helvetica-Bold').fontSize(8);
+        doc.font('Helvetica-Bold').fontSize(7);
         const totalGpay = works.reduce((sum, w) => sum + (w.gpayAmount || 0), 0);
         const totalCash = works.reduce((sum, w) => sum + (w.cashAmount || 0), 0);
         const totalAppFee = works.reduce((sum, w) => sum + (w.applicationFee || 0), 0);
+        const totalAeps = works.reduce((sum, w) => sum + (w.items ? w.items.reduce((s, i) => s + (i.presetChargeType === 'AEPS' ? (i.presetAmount || 0) : 0), 0) : 0), 0);
         const totalAmt = works.reduce((sum, w) => sum + (w.totalAmount || w.amount || 0), 0);
-        const totalDisc = works.reduce((sum, w) => sum + (w.totalDiscount || 0), 0);
-        doc.text(`Total GPay: ₹${totalGpay} | Total Cash: ₹${totalCash} | Total App Fee: ₹${totalAppFee} | Total Amount: ₹${totalAmt} | Total Discount: ₹${totalDisc}`, 30, y, { align: 'right' });
+        const totalProfit = works.reduce((sum, w) => sum + (w.paymentStatus === 'Paid' ? ((w.items ? w.items.reduce((s, i) => s + ((i.serviceChargeAtTime || 0) * (i.quantity || 1)), 0) : 0) + (w.otherCharges || 0) - (w.totalDiscount || 0)) : 0), 0);
+        
+        doc.text(`Totals => GPay: ₹${totalGpay} | Cash: ₹${totalCash} | App Fee: ₹${totalAppFee} | AEPS: ₹${totalAeps} | Amt: ₹${totalAmt} | Profit: ₹${totalProfit}`, 30, y, { align: 'right' });
 
         doc.end();
     } catch (error) {
@@ -742,6 +771,8 @@ const createWorkItem = async (req, res) => {
             workCharge: parsedWorkCharge,
             serviceCharge: parsedServiceCharge,
             chargeType: chargeType || 'None',
+            status: req.body.status !== undefined ? req.body.status : true,
+            isActive: req.body.status !== undefined ? req.body.status : true,
             adminId: req.user.role === 'admin' ? req.user._id : req.user.adminId
         });
 
@@ -791,6 +822,7 @@ const updateWorkItem = async (req, res) => {
     try {
         const { name, workCharge, serviceCharge, chargeType, status, isActive } = req.body;
         const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
+        const statusValue = status !== undefined ? status : isActive;
         const workItem = await WorkItem.findOneAndUpdate(
             { _id: req.params.id, adminId },
             { name, workCharge, serviceCharge, chargeType, status: statusValue, isActive: statusValue },
