@@ -2,6 +2,10 @@ const Work = require('../models/Work');
 const User = require('../models/User');
 const WorkItem = require('../models/WorkItem');
 const purchaseController = require('./purchaseController');
+const { generateReceiptPDF } = require('../utils/pdfUtil');
+const { sendWhatsAppDocument } = require('../utils/whatsappUtil');
+const path = require('path');
+const fs = require('fs');
 
 const parseLocalDate = (dateStr) => {
   if (!dateStr) return null;
@@ -22,10 +26,11 @@ const createWork = async (req, res) => {
       gpayAmount = 0, 
       cashAmount = 0, 
       items, 
-      paymentStatus, 
+      paymentStatus,
       workStatus, 
       notes,
-      applicationFee = 0 
+      applicationFee = 0,
+      amount: originalAmount = 0
     } = req.body;
 
     // Convert to numbers
@@ -143,7 +148,7 @@ const createWork = async (req, res) => {
       gpayAmount,
       cashAmount,
       totalAmount,
-      amount: totalAmount, // Sync with amount for backward compatibility
+      amount: originalAmount || totalAmount, // Preserve the actual amount for pending entries
       items: processedItems,
       adminPrice: totalWorkCharge + totalServiceCharge,
       totalDiscount: totalDiscount,
@@ -369,8 +374,8 @@ const updateWork = async (req, res) => {
       paymentStatus, 
       workStatus, 
       notes,
-      applicationFee
- 
+      applicationFee,
+      amount: originalAmount = 0
     } = req.body;
 
     const work = await Work.findById(req.params.id);
@@ -403,7 +408,9 @@ const updateWork = async (req, res) => {
     // Convert to numbers
     gpayAmount = Number(gpayAmount) || 0;
     cashAmount = Number(cashAmount) || 0;
+    originalAmount = Number(originalAmount) || 0;
     let totalAmount = 0;
+    let finalAmount = originalAmount;
 
     // Payment Logic as requested
     if (paymentMethod === "GPay") {
@@ -421,6 +428,8 @@ const updateWork = async (req, res) => {
         });
       }
     }
+    
+    finalAmount = originalAmount || totalAmount;
 
     // Update fields
     if (date) {
@@ -435,7 +444,7 @@ const updateWork = async (req, res) => {
     work.gpayAmount = gpayAmount;
     work.cashAmount = cashAmount;
     work.totalAmount = totalAmount;
-    work.amount = totalAmount; // Sync for backward compatibility
+    work.amount = finalAmount; // Preserve amount
     if (paymentStatus) work.paymentStatus = paymentStatus;
     if (workStatus) work.workStatus = workStatus;
     if (notes !== undefined) work.notes = notes;
@@ -718,6 +727,46 @@ const getShopBalance = async (req, res) => {
   }
 };
 
+// Send WhatsApp Bill
+const sendWhatsAppBill = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const work = await Work.findById(id).populate('employee', 'name mobile employeeId');
+
+    if (!work) {
+      return res.status(404).json({ success: false, message: 'Work not found' });
+    }
+
+    if (!work.customerPhone) {
+      return res.status(400).json({ success: false, message: 'Customer phone number is missing' });
+    }
+
+    // Generate PDF
+    const receiptsDir = path.join(__dirname, '../public/receipts');
+    if (!fs.existsSync(receiptsDir)) {
+      fs.mkdirSync(receiptsDir, { recursive: true });
+    }
+
+    const fileName = `receipt_${work._id}.pdf`;
+    const filePath = path.join(receiptsDir, fileName);
+
+    await generateReceiptPDF(work, filePath);
+
+    // Create public URL (no longer strictly needed for WhatsApp, but good to have)
+    let baseUrl = process.env.API_URL || `${req.protocol}://${req.get('host')}`;
+    const pdfUrl = `${baseUrl}/public/receipts/${fileName}`;
+
+    // Send via WhatsApp (Upload directly since localhost links are rejected by WhatsApp)
+    const safeName = (work.customerName || 'Customer').replace(/\s+/g, '_');
+    await sendWhatsAppDocument(work.customerPhone, filePath, `Receipt_${safeName}.pdf`);
+
+    res.status(200).json({ success: true, message: 'WhatsApp bill sent successfully' });
+  } catch (error) {
+    console.error('Error sending WhatsApp bill:', error);
+    res.status(500).json({ success: false, message: 'Failed to send WhatsApp bill', error: error.message });
+  }
+};
+
 module.exports = {
   createWork,
   getMyWorks,
@@ -727,5 +776,6 @@ module.exports = {
   deleteWork,
   getMyWorkStats,
   getActiveWorkItems,
-  getShopBalance
+  getShopBalance,
+  sendWhatsAppBill
 };

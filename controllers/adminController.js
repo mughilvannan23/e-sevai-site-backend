@@ -148,7 +148,7 @@ const getDashboardStats = async (req, res) => {
             Work.countDocuments({ adminId, workStatus: 'Completed' }),
             Work.aggregate([
                 { $match: { adminId, paymentStatus: 'Paid' } },
-                { $project: { paymentStatus: 1, otherCharges: { $ifNull: ['$otherCharges', 0] }, totalDiscount: { $ifNull: ['$totalDiscount', 0] }, serviceCharge: { $sum: { $map: { input: { $ifNull: ['$items', []] }, as: 'item', in: { $add: [ { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] }, { $ifNull: ['$$item.otherCharges', 0] } ] } } } } } },
+                { $project: { paymentStatus: 1, otherCharges: { $ifNull: ['$otherCharges', 0] }, totalDiscount: { $ifNull: ['$totalDiscount', 0] }, serviceCharge: { $sum: { $map: { input: { $ifNull: ['$items', []] }, as: 'item', in: { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] } } } } } },
                 { $group: { _id: null, totalProfit: { $sum: { $subtract: [{ $add: ['$serviceCharge', '$otherCharges'] }, '$totalDiscount'] } } } }
             ]),
             purchaseController.calculateBalance(adminId),
@@ -387,7 +387,7 @@ const getRevenueReport = async (req, res) => {
                     expectedRevenue: { $add: ['$entryWorkCharge', '$entryServiceCharge'] },
                     netProfit: {
                         $subtract: [
-                            { $add: ['$entryServiceCharge', '$entryOtherCharges', { $ifNull: ['$otherCharges', 0] }] },
+                            { $add: ['$entryServiceCharge', { $ifNull: ['$otherCharges', 0] }] },
                             { $ifNull: ['$totalDiscount', 0] }
                         ]
                     }
@@ -403,7 +403,7 @@ const getRevenueReport = async (req, res) => {
                     totalWorkCharge: { $sum: '$entryWorkCharge' },
                     totalServiceCharge: { $sum: '$entryServiceCharge' },
                     totalBaseCost: { $sum: '$expectedRevenue' },
-                    totalOtherCharges: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $add: ['$entryOtherCharges', { $ifNull: ['$otherCharges', 0] }] }, 0] } },
+                    totalOtherCharges: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$otherCharges', 0] }, 0] } },
                     totalGpayAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$gpayAmount', 0] }, 0] } },
                     totalCashAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$cashAmount', 0] }, 0] } },
                     totalApplicationFee: { $sum: { $ifNull: ['$applicationFee', 0] } },

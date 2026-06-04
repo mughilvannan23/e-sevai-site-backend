@@ -14,7 +14,11 @@ const adminRoutes = require('./routes/adminRoutes');
 const superadminRoutes = require('./routes/superadminRoutes');
 const purchaseRoutes = require('./routes/purchaseRoutes');
 
+const path = require('path');
 const app = express();
+
+// Serve public directory for generated receipts
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // Security middleware
 app.use(helmet({

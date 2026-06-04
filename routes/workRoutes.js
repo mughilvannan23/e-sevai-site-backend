@@ -10,7 +10,8 @@ const {
   deleteWork,
   getMyWorkStats,
   getActiveWorkItems,
-  getShopBalance
+  getShopBalance,
+  sendWhatsAppBill
 } = require('../controllers/workController');
 const { authenticate, authorizeEmployee } = require('../middleware/auth');
 
@@ -106,6 +107,7 @@ router.get('/stats', authenticate, getMyWorkStats);
 router.get('/items/active', authenticate, getActiveWorkItems);
 router.get('/employee/shop-balance', authenticate, authorizeEmployee, getShopBalance);
 router.get('/:id', authenticate, getWorkById);
+router.post('/send-whatsapp-bill/:id', authenticate, sendWhatsAppBill);
 router.put('/:id', authenticate, updateWorkValidation, validateRequest, updateWork);
 router.delete('/:id', authenticate, deleteWork);
 
