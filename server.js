@@ -56,6 +56,7 @@ const validateEnvironment = () => {
     }
   });
 
+
   if (!process.env.ADMIN_PASSWORD && !process.env.ADMIN_PASSWORD_HASH) {
     missing.push('ADMIN_PASSWORD or ADMIN_PASSWORD_HASH');
   }
