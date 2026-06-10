@@ -90,13 +90,33 @@ exports.getAllPurchases = async (req, res) => {
             query.date = { $gte: start, $lte: end };
         }
 
-        const purchases = await Purchase.find(query).sort({ date: -1 });
+        const purchases = await Purchase.find(query).sort({ date: -1, createdAt: -1 });
         const shopBalance = await exports.calculateBalance(adminId);
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        const [todayGpayAgg, todayGpayDeductionsAgg] = await Promise.all([
+            Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $ifNull: ['$gpayAmount', 0] } } } }]),
+            Work.aggregate([
+                { $match: { adminId, date: { $gte: today, $lt: tomorrow }, items: { $type: 'array' } } },
+                { $unwind: '$items' },
+                { $match: { 'items.presetChargeType': 'GPay' } },
+                { $group: { _id: null, total: { $sum: '$items.presetAmount' } } }
+            ])
+        ]);
+
+        const todayGpay = (todayGpayAgg[0]?.total || 0) - (todayGpayDeductionsAgg[0]?.total || 0);
 
         res.json({
             success: true,
             purchases,
-            shopBalance
+            shopBalance: {
+                ...shopBalance,
+                todayGpay
+            }
         });
     } catch (error) {
         console.error('Get purchases error:', error);
