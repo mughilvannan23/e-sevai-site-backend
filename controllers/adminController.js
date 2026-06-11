@@ -152,9 +152,9 @@ const getDashboardStats = async (req, res) => {
                 { $group: { _id: null, totalProfit: { $sum: { $subtract: [{ $add: ['$serviceCharge', '$otherCharges'] }, '$totalDiscount'] } } } }
             ]),
             purchaseController.calculateBalance(adminId),
-            Work.countDocuments({ adminId, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } }),
+            Work.countDocuments({ adminId, 'items.presetChargeType': 'AEPS', date: { $gte: today, $lt: tomorrow } }),
             Work.aggregate([
-                { $match: { adminId, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } } },
+                { $match: { adminId, 'items.presetChargeType': 'AEPS', date: { $gte: today, $lt: tomorrow } } },
                 { $unwind: '$items' },
                 { $match: { 'items.presetChargeType': 'AEPS' } },
                 { $group: { _id: null, totalAepsAmount: { $sum: { $ifNull: ['$items.presetAmount', 0] } } } }

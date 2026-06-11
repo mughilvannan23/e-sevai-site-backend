@@ -635,9 +635,9 @@ const getMyWorkStats = async (req, res) => {
       { $group: { _id: null, total: { $sum: { $ifNull: ['$totalAmount', '$amount'] } } } }
     ]);
 
-    const aepsWorksCount = await Work.countDocuments({ employee: req.user._id, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } });
+    const aepsWorksCount = await Work.countDocuments({ employee: req.user._id, 'items.presetChargeType': 'AEPS', date: { $gte: today, $lt: tomorrow } });
     const aepsAmountAgg = await Work.aggregate([
-      { $match: { employee: req.user._id, 'items.presetChargeType': 'AEPS', date: { $gte: thisMonth } } },
+      { $match: { employee: req.user._id, 'items.presetChargeType': 'AEPS', date: { $gte: today, $lt: tomorrow } } },
       { $unwind: '$items' },
       { $match: { 'items.presetChargeType': 'AEPS' } },
       { $group: { _id: null, totalAepsAmount: { $sum: { $ifNull: ['$items.presetAmount', 0] } } } }
