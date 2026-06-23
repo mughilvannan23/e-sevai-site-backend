@@ -100,6 +100,13 @@ const workSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  durationMonths: {
+    type: Number,
+    default: 0
+  },
+  expiryDate: {
+    type: Date
+  },
   totalDiscount: {
     type: Number,
     default: 0,
@@ -109,6 +116,24 @@ const workSchema = new mongoose.Schema({
     type: Number,
     required: [true, 'Amount is required'],
     min: [0, 'Amount must be positive']
+  },
+  paidAmount: {
+    type: Number,
+    default: 0,
+    min: [0, 'Paid amount cannot be negative']
+  },
+  pendingAmount: {
+    type: Number,
+    default: 0,
+    min: [0, 'Pending amount cannot be negative']
+  },
+  allocatedApplicationFee: {
+    type: Number,
+    default: 0
+  },
+  allocatedServiceCharge: {
+    type: Number,
+    default: 0
   },
   otherCharges: {
     type: Number,
@@ -121,7 +146,7 @@ const workSchema = new mongoose.Schema({
   },
   paymentStatus: {
     type: String,
-    enum: ['Paid', 'Pending', 'None'],
+    enum: ['Paid', 'Pending', 'Split', 'None'],
     default: 'Pending'
   },
   workStatus: {

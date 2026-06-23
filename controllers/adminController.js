@@ -23,7 +23,8 @@ const getAllWorks = async (req, res) => {
             employeeId,
             paymentStatus,
             workStatus,
-            search
+            search,
+            durationBased
         } = req.query;
 
         // Build query
@@ -52,7 +53,11 @@ const getAllWorks = async (req, res) => {
 
         // Payment status filter
         if (paymentStatus) {
-            query.paymentStatus = paymentStatus;
+            if (paymentStatus === 'Pending') {
+                query.paymentStatus = { $in: ['Pending', 'Split'] };
+            } else {
+                query.paymentStatus = paymentStatus;
+            }
         }
 
         // Work status filter
@@ -70,6 +75,10 @@ const getAllWorks = async (req, res) => {
                 { customerName: { $regex: search, $options: 'i' } },
                 { 'items.title': { $regex: search, $options: 'i' } }
             ];
+        }
+
+        if (durationBased === 'true') {
+            query.durationMonths = { $gt: 0 };
         }
 
         // Get works with pagination concurrently
@@ -139,17 +148,17 @@ const getDashboardStats = async (req, res) => {
             Work.find({ adminId, date: { $gte: today, $lt: tomorrow } }).lean(),
             Work.find({ adminId, date: { $gte: thisMonth } }).lean(),
             Work.countDocuments({ adminId, date: { $gte: thisMonth } }),
-            Work.aggregate([{ $match: { adminId, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
-            Work.aggregate([{ $match: { adminId, date: { $gte: thisMonth }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
-            Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
-            Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: 'Paid' } }, { $group: { _id: null, total: { $sum: { $ifNull: ['$gpayAmount', 0] } } } }]),
-            Work.countDocuments({ adminId, paymentStatus: 'Pending' }),
+            Work.aggregate([{ $match: { adminId, paymentStatus: { $in: ['Paid', 'Split'] } } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
+            Work.aggregate([{ $match: { adminId, date: { $gte: thisMonth }, paymentStatus: { $in: ['Paid', 'Split'] } } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
+            Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: { $in: ['Paid', 'Split'] } } }, { $group: { _id: null, total: { $sum: { $add: [{ $ifNull: ['$gpayAmount', 0] }, { $ifNull: ['$cashAmount', 0] }] } } } }]),
+            Work.aggregate([{ $match: { adminId, date: { $gte: today, $lt: tomorrow }, paymentStatus: { $in: ['Paid', 'Split'] } } }, { $group: { _id: null, total: { $sum: { $ifNull: ['$gpayAmount', 0] } } } }]),
+            Work.countDocuments({ adminId, paymentStatus: { $in: ['Pending', 'Split'] } }),
             Work.countDocuments({ adminId, workStatus: { $in: ['Pending', 'In Progress'] } }),
             Work.countDocuments({ adminId, workStatus: 'Completed' }),
             Work.aggregate([
-                { $match: { adminId, paymentStatus: 'Paid' } },
-                { $project: { paymentStatus: 1, otherCharges: { $ifNull: ['$otherCharges', 0] }, totalDiscount: { $ifNull: ['$totalDiscount', 0] }, serviceCharge: { $sum: { $map: { input: { $ifNull: ['$items', []] }, as: 'item', in: { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] } } } } } },
-                { $group: { _id: null, totalProfit: { $sum: { $subtract: [{ $add: ['$serviceCharge', '$otherCharges'] }, '$totalDiscount'] } } } }
+                { $match: { adminId, paymentStatus: { $in: ['Paid', 'Split'] } } },
+                { $project: { paymentStatus: 1, allocatedServiceCharge: { $ifNull: ['$allocatedServiceCharge', 0] }, totalDiscount: { $ifNull: ['$totalDiscount', 0] }, serviceCharge: { $sum: { $map: { input: { $ifNull: ['$items', []] }, as: 'item', in: { $multiply: [{ $ifNull: ['$$item.serviceChargeAtTime', 0] }, { $ifNull: ['$$item.quantity', 1] }] } } } }, otherCharges: { $ifNull: ['$otherCharges', 0] } } },
+                { $group: { _id: null, totalProfit: { $sum: { $subtract: [{ $cond: [{ $eq: ['$paymentStatus', 'Split'] }, '$allocatedServiceCharge', { $add: ['$serviceCharge', '$otherCharges'] }] }, '$totalDiscount'] } } } }
             ]),
             purchaseController.calculateBalance(adminId),
             Work.countDocuments({ adminId, 'items.presetChargeType': 'AEPS', date: { $gte: today, $lt: tomorrow } }),
@@ -250,8 +259,8 @@ const getEmployeePerformance = async (req, res) => {
                     completedWorks: { $sum: { $cond: [{ $eq: ['$workStatus', 'Completed'] }, 1, 0] } },
                     inProgressWorks: { $sum: { $cond: [{ $in: ['$workStatus', ['Pending', 'In Progress']] }, 1, 0] } },
                     totalAmount: { $sum: { $ifNull: ['$amount', 0] } },
-                    paidAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$amount', 0] }, 0] } },
-                    pendingAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, { $ifNull: ['$amount', 0] }, 0] } }
+                    paidAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$amount', 0] }, { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $ifNull: ['$paidAmount', 0] }, 0] }] } },
+                    pendingAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, { $ifNull: ['$amount', 0] }, { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $ifNull: ['$pendingAmount', 0] }, 0] }] } }
                 }
             }
         ]);
@@ -268,8 +277,8 @@ const getEmployeePerformance = async (req, res) => {
                     totalAmount: stat.totalAmount,
                     paidAmount: stat.paidAmount,
                     pendingAmount: stat.pendingAmount,
-                    completionRate: stat.totalWorks > 0 ? (stat.completedWorks / stat.totalWorks * 100).toFixed(1) : 0,
-                    paymentCollectionRate: stat.totalAmount > 0 ? (stat.paidAmount / stat.totalAmount * 100).toFixed(1) : 0
+                    completionRate: stat.totalWorks > 0 ? (stat.completedWorks / stat.totalWorks * 100).toFixed(0) : 0,
+                    paymentCollectionRate: stat.totalAmount > 0 ? (stat.paidAmount / stat.totalAmount * 100).toFixed(0) : 0
                 }
             };
         }).filter(Boolean);
@@ -396,23 +405,23 @@ const getRevenueReport = async (req, res) => {
             {
                 $group: {
                     _id: groupByExpr,
-                    totalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$collectedAmount', 0] } },
-                    pendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$collectedAmount', 0] } },
-                    enteredTotalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$amount', 0] } },
-                    enteredPendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$amount', 0] } },
+                    totalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$collectedAmount', { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $ifNull: ['$paidAmount', 0] }, 0] }] } },
+                    pendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$collectedAmount', { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $ifNull: ['$pendingAmount', 0] }, 0] }] } },
+                    enteredTotalRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$amount', { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $ifNull: ['$paidAmount', 0] }, 0] }] } },
+                    enteredPendingRevenue: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, '$amount', { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $ifNull: ['$pendingAmount', 0] }, 0] }] } },
                     totalWorkCharge: { $sum: '$entryWorkCharge' },
                     totalServiceCharge: { $sum: '$entryServiceCharge' },
                     totalBaseCost: { $sum: '$expectedRevenue' },
-                    totalOtherCharges: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$otherCharges', 0] }, 0] } },
-                    totalGpayAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$gpayAmount', 0] }, 0] } },
-                    totalCashAmount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, { $ifNull: ['$cashAmount', 0] }, 0] } },
+                    totalOtherCharges: { $sum: { $cond: [{ $in: ['$paymentStatus', ['Paid', 'Split']] }, { $ifNull: ['$otherCharges', 0] }, 0] } },
+                    totalGpayAmount: { $sum: { $cond: [{ $in: ['$paymentStatus', ['Paid', 'Split']] }, { $ifNull: ['$gpayAmount', 0] }, 0] } },
+                    totalCashAmount: { $sum: { $cond: [{ $in: ['$paymentStatus', ['Paid', 'Split']] }, { $ifNull: ['$cashAmount', 0] }, 0] } },
                     totalApplicationFee: { $sum: { $ifNull: ['$applicationFee', 0] } },
-                    totalActualCollected: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$collectedAmount', 0] } },
+                    totalActualCollected: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$collectedAmount', { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $ifNull: ['$paidAmount', 0] }, 0] }] } },
                     totalDiscount: { $sum: { $ifNull: ['$totalDiscount', 0] } },
-                    totalNetProfit: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$netProfit', 0] } },
+                    totalNetProfit: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$netProfit', { $cond: [{ $eq: ['$paymentStatus', 'Split'] }, { $subtract: [{ $ifNull: ['$allocatedServiceCharge', 0] }, { $ifNull: ['$totalDiscount', 0] }] }, 0] }] } },
                     totalWorks: { $sum: 1 },
                     paidWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, 1, 0] } },
-                    pendingWorks: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Pending'] }, 1, 0] } }
+                    pendingWorks: { $sum: { $cond: [{ $in: ['$paymentStatus', ['Pending', 'Split']] }, 1, 0] } }
                 }
             },
             {
@@ -490,7 +499,13 @@ const downloadRevenueExcel = async (req, res) => {
 
         const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         const query = { adminId, date: { $gte: start, $lte: end } };
-        if (paymentStatus) query.paymentStatus = paymentStatus;
+        if (paymentStatus) {
+            if (paymentStatus === 'Pending') {
+                query.paymentStatus = { $in: ['Pending', 'Split'] };
+            } else {
+                query.paymentStatus = paymentStatus;
+            }
+        }
         if (workStatus) {
             if (workStatus === 'Pending') {
                 query.workStatus = { $in: ['Pending', 'In Progress'] };
@@ -596,7 +611,13 @@ const downloadRevenuePDF = async (req, res) => {
 
         const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
         const query = { adminId, date: { $gte: start, $lte: end } };
-        if (paymentStatus) query.paymentStatus = paymentStatus;
+        if (paymentStatus) {
+            if (paymentStatus === 'Pending') {
+                query.paymentStatus = { $in: ['Pending', 'Split'] };
+            } else {
+                query.paymentStatus = paymentStatus;
+            }
+        }
         if (workStatus) {
             if (workStatus === 'Pending') {
                 query.workStatus = { $in: ['Pending', 'In Progress'] };

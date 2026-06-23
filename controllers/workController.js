@@ -30,7 +30,8 @@ const createWork = async (req, res) => {
       workStatus, 
       notes,
       applicationFee = 0,
-      amount: originalAmount = 0
+      amount: originalAmount = 0,
+      durationMonths = 0
     } = req.body;
 
     // Convert to numbers
@@ -121,6 +122,13 @@ const createWork = async (req, res) => {
       workDate = currentTime;
     }
 
+    let expiryDate = null;
+    const durMonths = Number(durationMonths) || 0;
+    if (durMonths > 0) {
+      expiryDate = new Date(workDate);
+      expiryDate.setMonth(expiryDate.getMonth() + durMonths);
+    }
+
     // Validate Shop Balance for Handcash to Gpay Transfer only if becoming Paid
     const transferItem = items.find(i => i.workTitle?.toLowerCase().includes('handcash to gpay transfer') || i.title?.toLowerCase().includes('handcash to gpay transfer'));
     if (transferItem && paymentStatus === 'Paid') {
@@ -137,6 +145,32 @@ const createWork = async (req, res) => {
 
     const hasAEPS = processedItems.every(item => item.presetChargeType === 'AEPS');
 
+    let finalAmount = originalAmount || totalAmount;
+    let paidAmount = 0;
+    let pendingAmount = 0;
+    let allocatedApplicationFee = 0;
+    let allocatedServiceCharge = 0;
+
+    if (paymentStatus === 'Split') {
+      paidAmount = totalAmount; // totalAmount holds the sum of gpay/cash inputs
+      pendingAmount = Math.max(0, finalAmount - paidAmount);
+      
+      allocatedApplicationFee = Math.min(paidAmount, calculatedAppFee);
+      const remainingPaid = paidAmount - allocatedApplicationFee;
+      allocatedServiceCharge = Math.min(remainingPaid, totalWorkCharge + totalServiceCharge + totalOtherCharges);
+    } else if (paymentStatus === 'Paid') {
+      paidAmount = finalAmount;
+      pendingAmount = 0;
+      allocatedApplicationFee = calculatedAppFee;
+      allocatedServiceCharge = totalWorkCharge + totalServiceCharge + totalOtherCharges;
+    } else {
+      // Pending
+      paidAmount = 0;
+      pendingAmount = finalAmount;
+      allocatedApplicationFee = 0;
+      allocatedServiceCharge = 0;
+    }
+
     // Create work entry (using 'employee' field as per model)
     const work = await Work.create({
       employee: req.user.id,
@@ -148,15 +182,22 @@ const createWork = async (req, res) => {
       gpayAmount,
       cashAmount,
       totalAmount,
-      amount: originalAmount || totalAmount, // Preserve the actual amount for pending entries
+      amount: finalAmount, // Preserve the actual amount for pending/split entries
+      paidAmount,
+      pendingAmount,
+      allocatedApplicationFee,
+      allocatedServiceCharge,
       items: processedItems,
       adminPrice: totalWorkCharge + totalServiceCharge,
       totalDiscount: totalDiscount,
       otherCharges: totalOtherCharges,
       paymentStatus: paymentStatus || 'Pending',
       workStatus: workStatus || 'In Progress',
+      workStatus: workStatus || 'In Progress',
       notes,
-      applicationFee: calculatedAppFee
+      applicationFee: calculatedAppFee,
+      durationMonths: durMonths,
+      expiryDate
     });
 
     // Populate employee details
@@ -180,7 +221,7 @@ const createWork = async (req, res) => {
 // Get all works for all employees (View only for employees)
 const getAllEmployeeWorks = async (req, res) => {
   try {
-    const { page = 1, limit = 10, startDate, endDate, employeeId, paymentStatus, workStatus, search } = req.query;
+    const { page = 1, limit = 10, startDate, endDate, employeeId, paymentStatus, workStatus, search, durationBased } = req.query;
 
     const query = {
       adminId: req.user.role === 'admin' ? req.user._id : req.user.adminId
@@ -194,7 +235,13 @@ const getAllEmployeeWorks = async (req, res) => {
     }
 
     if (employeeId) query.employee = employeeId;
-    if (paymentStatus) query.paymentStatus = paymentStatus;
+    if (paymentStatus) {
+      if (paymentStatus === 'Pending') {
+         query.paymentStatus = { $in: ['Pending', 'Split'] };
+      } else {
+         query.paymentStatus = paymentStatus;
+      }
+    }
     if (workStatus) {
       if (workStatus === 'Pending') {
         query.workStatus = { $in: ['Pending', 'In Progress'] };
@@ -208,6 +255,10 @@ const getAllEmployeeWorks = async (req, res) => {
         { customerName: { $regex: search, $options: 'i' } },
         { 'items.title': { $regex: search, $options: 'i' } }
       ];
+    }
+
+    if (durationBased === 'true') {
+      query.durationMonths = { $gt: 0 };
     }
 
     const [works, total] = await Promise.all([
@@ -243,7 +294,7 @@ const getAllEmployeeWorks = async (req, res) => {
 // Get work entries for current user
 const getMyWorks = async (req, res) => {
   try {
-    const { page = 1, limit = 10, date, startDate, endDate, status, search } = req.query;
+    const { page = 1, limit = 10, date, startDate, endDate, status, search, durationBased } = req.query;
 
     // Build query
     const query = { employee: req.user._id };
@@ -281,6 +332,10 @@ const getMyWorks = async (req, res) => {
         { customerName: { $regex: search, $options: 'i' } },
         { 'items.title': { $regex: search, $options: 'i' } }
       ];
+    }
+
+    if (durationBased === 'true') {
+      query.durationMonths = { $gt: 0 };
     }
 
     // Get works with pagination concurrently
@@ -375,7 +430,8 @@ const updateWork = async (req, res) => {
       workStatus, 
       notes,
       applicationFee,
-      amount: originalAmount = 0
+      amount: originalAmount = 0,
+      durationMonths = 0
     } = req.body;
 
     const work = await Work.findById(req.params.id);
@@ -450,6 +506,17 @@ const updateWork = async (req, res) => {
     if (notes !== undefined) work.notes = notes;
     if (applicationFee !== undefined) work.applicationFee = Number(applicationFee) || 0;
 
+    const durMonths = Number(durationMonths) || 0;
+    work.durationMonths = durMonths;
+    if (durMonths > 0) {
+      const baseDate = work.date || new Date();
+      const expDate = new Date(baseDate);
+      expDate.setMonth(expDate.getMonth() + durMonths);
+      work.expiryDate = expDate;
+    } else {
+      work.expiryDate = undefined;
+    }
+
     // Secondary check for transfer in processed items
     let calculatedAppFee = work.applicationFee;
 
@@ -520,7 +587,7 @@ const updateWork = async (req, res) => {
     }
     // Secondary check for transfer in processed items
     const transferItem = work.items.find(i => i.title.toLowerCase().includes('handcash to gpay transfer'));
-    if (transferItem && work.paymentStatus === 'Paid') {
+    if (transferItem && (work.paymentStatus === 'Paid' || work.paymentStatus === 'Split')) {
       const adminId = req.user.role === 'admin' ? req.user._id : req.user.adminId;
       const balances = await purchaseController.getShopBalanceInternal(adminId);
       let currentBalance = balances.handCashBalance;
@@ -529,17 +596,48 @@ const updateWork = async (req, res) => {
       // If we are UPDATING an existing Paid entry, we should add back its previous fee before checking.
       let balanceToCheck = currentBalance;
       const oldWork = await Work.findById(req.params.id);
-      if (oldWork && oldWork.paymentStatus === 'Paid' && oldWork.items.some(i => i.title.toLowerCase().includes('handcash to gpay transfer'))) {
-         balanceToCheck += oldWork.applicationFee;
+      if (oldWork && (oldWork.paymentStatus === 'Paid' || oldWork.paymentStatus === 'Split') && oldWork.items.some(i => i.title.toLowerCase().includes('handcash to gpay transfer'))) {
+         balanceToCheck += oldWork.allocatedApplicationFee || oldWork.applicationFee;
       }
 
-      if (calculatedAppFee > balanceToCheck) {
+      const requestedAppFeeAlloc = Math.min(work.paymentStatus === 'Split' ? work.totalAmount : finalAmount, calculatedAppFee);
+      if (requestedAppFeeAlloc > balanceToCheck) {
         return res.status(400).json({
           success: false,
           message: `Insufficient Shop Balance. Available: ₹${balanceToCheck.toLocaleString()}`
         });
       }
     }
+
+    let paidAmount = 0;
+    let pendingAmount = 0;
+    let allocatedApplicationFee = 0;
+    let allocatedServiceCharge = 0;
+
+    if (work.paymentStatus === 'Split') {
+      paidAmount = work.totalAmount; // totalAmount holds the sum of gpay/cash inputs from frontend
+      pendingAmount = Math.max(0, finalAmount - paidAmount);
+      
+      allocatedApplicationFee = Math.min(paidAmount, calculatedAppFee);
+      const remainingPaid = paidAmount - allocatedApplicationFee;
+      allocatedServiceCharge = Math.min(remainingPaid, work.adminPrice + work.otherCharges);
+    } else if (work.paymentStatus === 'Paid') {
+      paidAmount = finalAmount;
+      pendingAmount = 0;
+      allocatedApplicationFee = calculatedAppFee;
+      allocatedServiceCharge = work.adminPrice + work.otherCharges;
+    } else {
+      // Pending
+      paidAmount = 0;
+      pendingAmount = finalAmount;
+      allocatedApplicationFee = 0;
+      allocatedServiceCharge = 0;
+    }
+
+    work.paidAmount = paidAmount;
+    work.pendingAmount = pendingAmount;
+    work.allocatedApplicationFee = allocatedApplicationFee;
+    work.allocatedServiceCharge = allocatedServiceCharge;
 
     await work.save();
 
@@ -654,7 +752,7 @@ const getMyWorkStats = async (req, res) => {
         totalWorks,
         totalEarnings: totalEarnings[0]?.total || 0,
         pendingWorks: monthWorks.filter(w => ['Pending', 'In Progress'].includes(w.workStatus)).length,
-        pendingAmount: monthWorks.filter(w => w.paymentStatus === 'Pending').reduce((sum, w) => sum + (w.totalAmount || w.amount), 0),
+        pendingAmount: monthWorks.filter(w => ['Pending', 'Split'].includes(w.paymentStatus)).reduce((sum, w) => sum + (w.pendingAmount !== undefined ? w.pendingAmount : (w.paymentStatus === 'Pending' ? (w.totalAmount || w.amount) : 0)), 0),
         aeps: {
           count: aepsWorksCount,
           amount: totalAepsAmount

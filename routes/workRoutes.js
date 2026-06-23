@@ -53,8 +53,8 @@ const workValidation = [
   body('paymentStatus')
     .notEmpty()
     .withMessage('Payment status is required')
-    .isIn(['Paid', 'Pending'])
-    .withMessage('Payment status must be Paid or Pending'),
+    .isIn(['Paid', 'Pending', 'Split'])
+    .withMessage('Payment status must be Paid, Pending, or Split'),
   body('workStatus')
     .notEmpty()
     .withMessage('Work status is required')
@@ -87,8 +87,8 @@ const updateWorkValidation = [
     .withMessage('Amount must be positive'),
   body('paymentStatus')
     .optional()
-    .isIn(['Paid', 'Pending'])
-    .withMessage('Payment status must be Paid or Pending'),
+    .isIn(['Paid', 'Pending', 'Split'])
+    .withMessage('Payment status must be Paid, Pending, or Split'),
   body('workStatus')
     .optional()
     .isIn(['In Progress', 'Completed'])
