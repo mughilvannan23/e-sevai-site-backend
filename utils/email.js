@@ -1,65 +1,26 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
+
+// Initialize Resend with API key
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 /**
- * Create Nodemailer transporter with proper error handling
- */
-const createTransporter = () => {
-  try {
-    // Validate required email configuration
-    const required = ['EMAIL_HOST', 'EMAIL_PORT', 'EMAIL_USER', 'EMAIL_PASSWORD'];
-    const missing = required.filter(key => !process.env[key]);
-
-    if (missing.length > 0) {
-      throw new Error(`Missing email configuration: ${missing.join(', ')}`);
-    }
-
-    // Default EMAIL_FROM if not set
-    if (!process.env.EMAIL_FROM) {
-      process.env.EMAIL_FROM = process.env.EMAIL_USER;
-    }
-
-    return nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: Number(process.env.EMAIL_PORT) || 587,
-      secure: process.env.EMAIL_SECURE === 'true',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD,
-      },
-      // Timeout settings for reliability
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
-      // Disable TLS reject unauthorized for development
-      tls: {
-        rejectUnauthorized: process.env.NODE_ENV === 'production'
-      }
-    });
-  } catch (error) {
-    console.error('❌ Email transporter creation failed:', error.message);
-    throw error;
-  }
-};
-
-/**
- * ✅ Send OTP Email
+ * ✅ Send OTP Email using Resend
  */
 const sendOTP = async (email, otp) => {
   try {
-    const transporter = createTransporter();
+    const fromEmail = process.env.EMAIL_FROM;
 
-    const mailOptions = {
-      from: process.env.EMAIL_FROM,
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
       to: email,
       subject: 'Your OTP for e-Sevai Office Login',
-      priority: 'high',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <div style="background: #f8f9fa; padding: 30px; border-radius: 10px; border: 1px solid #dee2e6;">
             <h2 style="color: #2c3e50; margin-top: 0;">e-Sevai Office Management</h2>
             <h3 style="color: #3498db;">One Time Password (OTP)</h3>
             <p style="font-size: 16px; line-height: 1.6; color: #333;">
-              Your OTP for admin login is: 
+              Your OTP for authentication is: 
               <strong style="font-size: 28px; color: #e74c3c; letter-spacing: 4px; display: block; margin: 15px 0;">${otp}</strong>
             </p>
             <p style="color: #666; font-size: 14px;">
@@ -72,11 +33,13 @@ const sendOTP = async (email, otp) => {
           </div>
         </div>
       `
-    };
+    });
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ OTP email sent successfully to ${email}, messageId: ${info.messageId}`);
-    
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    console.log(`✅ OTP email sent successfully to ${email}, messageId: ${data.id}`);
     return true;
   } catch (error) {
     console.error('❌ Failed to send OTP email:', error.message);
@@ -85,14 +48,14 @@ const sendOTP = async (email, otp) => {
 };
 
 /**
- * ✅ Send Welcome Email to New Employees
+ * ✅ Send Welcome Email to New Employees using Resend
  */
 const sendWelcomeEmail = async (email, name, password) => {
   try {
-    const transporter = createTransporter();
+    const fromEmail = process.env.EMAIL_FROM;
 
-    const mailOptions = {
-      from: process.env.EMAIL_FROM,
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
       to: email,
       subject: 'Welcome to e-Sevai Office Management System',
       html: `
@@ -112,11 +75,13 @@ const sendWelcomeEmail = async (email, name, password) => {
           </div>
         </div>
       `
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (error) {
+      throw new Error(error.message);
+    }
+
     console.log(`✅ Welcome email sent to ${email}`);
-    
     return true;
   } catch (error) {
     console.error('❌ Failed to send welcome email:', error.message);
@@ -125,16 +90,14 @@ const sendWelcomeEmail = async (email, name, password) => {
 };
 
 /**
- * Test email connection
+ * Test email connection (For Resend, we can just verify the API key is present)
  */
 const testEmailConnection = async () => {
-  try {
-    const transporter = createTransporter();
-    await transporter.verify();
-    console.log('✅ Email server connection successful');
+  if (process.env.RESEND_API_KEY) {
+    console.log('✅ Resend API Key is configured');
     return true;
-  } catch (error) {
-    console.error('❌ Email server connection failed:', error.message);
+  } else {
+    console.error('❌ Resend API Key is missing');
     return false;
   }
 };
@@ -142,6 +105,5 @@ const testEmailConnection = async () => {
 module.exports = {
   sendOTP,
   sendWelcomeEmail,
-  testEmailConnection,
-  createTransporter
+  testEmailConnection
 };

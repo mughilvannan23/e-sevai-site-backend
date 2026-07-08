@@ -1,13 +1,48 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 
+const createAdminAccount = async ({ shopName, mobile, password, email, subscriptionStartDate, subscriptionEndDate, isActive = true, role = 'admin' }) => {
+  const trimmedShopName = shopName?.trim();
+  const trimmedMobile = mobile?.trim();
+  const trimmedEmail = email?.trim().toLowerCase();
+
+  if (!trimmedShopName || !trimmedMobile || !password) {
+    throw new Error('Shop name, mobile, and password are required.');
+  }
+
+  if (!trimmedEmail) {
+    throw new Error('Email is required.');
+  }
+
+  const existingUser = await User.findOne({ mobile: trimmedMobile });
+  if (existingUser) {
+    throw new Error('Mobile number already in use.');
+  }
+
+  const user = new User({
+    name: 'Shop Admin',
+    mobile: trimmedMobile,
+    email: trimmedEmail || null,
+    password,
+    passwordText: password,
+    role,
+    shopName: trimmedShopName,
+    isActive,
+    subscriptionStartDate,
+    subscriptionEndDate
+  });
+
+  await user.save();
+  return user;
+};
+
 // Create a new shop admin
 const createShopAdmin = async (req, res) => {
   try {
-    const { shopName, mobile, password, subscriptionMonths } = req.body;
+    const { shopName, mobile, password, email, subscriptionMonths } = req.body;
 
-    if (!shopName || !mobile || !password) {
-      return res.status(400).json({ success: false, message: 'Shop name, mobile, and password are required.' });
+    if (!shopName || !mobile || !password || !email) {
+      return res.status(400).json({ success: false, message: 'Shop name, mobile, email, and password are required.' });
     }
 
     const months = parseInt(subscriptionMonths) || 1;
@@ -15,23 +50,14 @@ const createShopAdmin = async (req, res) => {
     const endDate = new Date();
     endDate.setMonth(endDate.getMonth() + months);
 
-    const existingUser = await User.findOne({ mobile: mobile.trim() });
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: 'Mobile number already in use.' });
-    }
-
-    const user = new User({
-      name: 'Shop Admin',
-      mobile: mobile.trim(),
+    const user = await createAdminAccount({
+      shopName,
+      mobile,
       password,
-      role: 'admin',
-      shopName: shopName.trim(),
-      isActive: true,
+      email,
       subscriptionStartDate: startDate,
       subscriptionEndDate: endDate
     });
-
-    await user.save();
 
     res.status(201).json({
       success: true,
@@ -49,7 +75,9 @@ const createShopAdmin = async (req, res) => {
 
   } catch (error) {
     console.error('Create shop admin error:', error);
-    res.status(500).json({ success: false, message: 'Server error while creating shop admin.' });
+    const message = error.message || 'Server error while creating shop admin.';
+    const statusCode = message === 'Mobile number already in use.' ? 400 : 500;
+    res.status(statusCode).json({ success: false, message });
   }
 };
 
@@ -57,7 +85,7 @@ const createShopAdmin = async (req, res) => {
 const getShopAdmins = async (req, res) => {
   try {
     const admins = await User.find({ role: 'admin' })
-      .select('shopName mobile isActive subscriptionStartDate subscriptionEndDate createdAt lastLogin')
+      .select('shopName mobile email passwordText isActive subscriptionStartDate subscriptionEndDate createdAt lastLogin')
       .sort({ createdAt: -1 });
 
     res.json({
@@ -74,7 +102,7 @@ const getShopAdmins = async (req, res) => {
 const updateShopAdmin = async (req, res) => {
   try {
     const { id } = req.params;
-    const { shopName, mobile, password, isActive, subscriptionMonths, subscriptionEndDate } = req.body;
+    const { shopName, mobile, password, email, isActive, subscriptionMonths, subscriptionEndDate } = req.body;
 
     const user = await User.findOne({ _id: id, role: 'admin' });
     
@@ -91,6 +119,7 @@ const updateShopAdmin = async (req, res) => {
 
     if (shopName) user.shopName = shopName.trim();
     if (mobile) user.mobile = mobile.trim();
+    if (email !== undefined) user.email = email ? email.trim().toLowerCase() : null;
     if (isActive !== undefined) user.isActive = isActive;
 
     if (subscriptionMonths) {
@@ -114,6 +143,7 @@ const updateShopAdmin = async (req, res) => {
 
     if (password && password.trim() !== '') {
       user.password = password; // pre-save hook will hash it
+      user.passwordText = password;
     }
 
     await user.save();
@@ -140,6 +170,7 @@ const updateShopAdmin = async (req, res) => {
 
 module.exports = {
   createShopAdmin,
+  createAdminAccount,
   getShopAdmins,
   updateShopAdmin
 };

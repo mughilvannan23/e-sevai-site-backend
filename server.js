@@ -160,6 +160,10 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/purchases', purchaseRoutes);
 
+
+
+
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({

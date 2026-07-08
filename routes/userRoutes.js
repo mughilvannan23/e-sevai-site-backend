@@ -35,10 +35,11 @@ const employeeValidation = [
     .isNumeric()
     .withMessage('Please enter a valid 10-digit mobile number'),
   body('email')
-    .optional({ checkFalsy: true })
+    .notEmpty()
+    .withMessage('Email is required')
     .isEmail()
     .normalizeEmail()
-    .withMessage('Please enter a valid email'),
+    .withMessage('Please enter a valid email address'),
   body('password')
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters long')

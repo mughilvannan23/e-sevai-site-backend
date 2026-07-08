@@ -6,6 +6,13 @@ const createEmployee = async (req, res) => {
   try {
     const { name, mobile, password, email } = req.body;
 
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required.'
+      });
+    }
+
     // Check if user already exists
     const existingUser = await User.findOne({ mobile: mobile.trim() });
     if (existingUser) {
@@ -19,7 +26,7 @@ const createEmployee = async (req, res) => {
     const user = new User({
       name,
       mobile: mobile.trim(),
-      email: email ? email.toLowerCase() : null,
+      email: email.toLowerCase().trim(),
       password,
       role: 'employee',
       adminId: req.user._id
