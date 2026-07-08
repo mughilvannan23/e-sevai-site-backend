@@ -87,6 +87,7 @@ const login = async (req, res) => {
         user = new User({
           name: 'System Administrator',
           mobile: configuredAdminMobile,
+          email: `${configuredAdminMobile}@admin.local`,
           password: hashedPassword,
           role: 'admin',
           shopName: 'Default Shop',
