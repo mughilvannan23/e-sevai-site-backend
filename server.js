@@ -34,7 +34,7 @@ app.use(helmet({
 }));
 
 // CORS configuration
-  const allowedOrigins = ['https://www.sevagan.shop'];
+  const allowedOrigins = ['https://www.sevagan.shop', 'http://localhost:5173', 'https://sevagan.netlify.app' ];
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
